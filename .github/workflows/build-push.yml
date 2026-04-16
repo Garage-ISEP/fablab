@@ -1,9 +1,6 @@
 name: CI/CD Build Push Pipeline
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 env:
