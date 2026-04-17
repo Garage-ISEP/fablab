@@ -64,7 +64,7 @@ pub fn MyOrdersPage() -> impl IntoView
                                 {
                                     <div class="alert alert-error">
                                         <p>"Connectez-vous pour voir vos commandes."</p>
-                                        <a href="/auth/cas" class="btn btn-primary">"Connexion ISEP"</a>
+                                        <a href="/auth/cas" class="btn btn-primary">"Connexion Isep"</a>
                                     </div>
                                 }.into_any()
                             }

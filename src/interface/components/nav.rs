@@ -58,7 +58,7 @@ pub fn Nav() -> impl IntoView
                                     view!
                                     {
                                         <nav class="navbar-links">
-                                            <a href="/auth/cas" class="btn-nav-primary">"Connexion ISEP"</a>
+                                            <a href="/auth/cas" class="btn-nav-primary">"Connexion Isep"</a>
                                         </nav>
                                     }.into_any()
                                 }

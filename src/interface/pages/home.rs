@@ -36,9 +36,9 @@ pub fn HomePage() -> impl IntoView
     {
         <div class="hero">
             <div class="hero-content">
-                <h1>"Impression 3D au Garage"</h1>
+                <h1>"Impression 3D par Garage Isep"</h1>
                 <p class="hero-subtitle">
-                    "Le service d'impression 3D des etudiants ISEP. \
+                    "Le service d'impression 3D pour les etudiants Isep. \
                      Deposez vos fichiers, choisissez votre materiau, recuperez votre piece."
                 </p>
 
@@ -77,7 +77,7 @@ pub fn HomePage() -> impl IntoView
                                     {
                                         <div class="hero-actions">
                                             <a href="/auth/cas" class="btn btn-primary btn-lg">
-                                                "Se connecter avec mon compte ISEP"
+                                                "Se connecter avec mon compte Isep"
                                             </a>
                                         </div>
                                     }.into_any()
