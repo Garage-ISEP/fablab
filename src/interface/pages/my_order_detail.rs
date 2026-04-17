@@ -11,9 +11,15 @@ pub async fn fetch_my_order_detail(order_id: i64) -> Result<OrderView, ServerFnE
     let caller = extract_student_caller().await?;
 
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
-    state.get_order
-        .execute(order_id, &caller)
-        .map_err(|e| ServerFnError::new(format!("{e}")))
+    let get_order = state.get_order.clone();
+    tokio::task::spawn_blocking(move ||
+    {
+        get_order
+            .execute(order_id, &caller)
+            .map_err(|e| ServerFnError::new(format!("{e}")))
+    })
+    .await
+    .map_err(|e| ServerFnError::new(format!("{e}")))?
 }
 
 #[component]
@@ -106,13 +112,12 @@ fn render_student_order_detail(o: OrderView) -> impl IntoView
                 <ul class="file-list">
                     {files.into_iter().map(|f|
                     {
-                        let href = format!("/files/{}/download", f.id);
                         let size_kb = (f.size_bytes + 1023) / 1024;
                         let name = f.original_filename.clone();
                         view!
                         {
                             <li>
-                                <a href=href class="file-link">{name}</a>
+                                <span class="file-name">{name}</span>
                                 " "
                                 <span class="file-size">{format!("({size_kb} KB)")}</span>
                             </li>

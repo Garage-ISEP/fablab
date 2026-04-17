@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::middleware;
 use leptos::config::LeptosOptions;
 use tower_sessions::cookie::SameSite;
-use tower_sessions::SessionManagerLayer;
+use tower_sessions::{Expiry, SessionManagerLayer};
 
 use fablab::application::use_cases::admin_login::AdminLoginUseCase;
 use fablab::application::use_cases::get_order::GetOrderUseCase;
@@ -281,7 +281,8 @@ async fn main()
     let session_layer = SessionManagerLayer::new(session_store)
         .with_http_only(true)
         .with_same_site(SameSite::Lax)
-        .with_secure(is_release);
+        .with_secure(is_release)
+        .with_expiry(Expiry::OnInactivity(time::Duration::hours(8)));
 
     let app = build_router(state, app::App, app::shell)
         .layer(middleware::from_fn(security_headers_middleware))

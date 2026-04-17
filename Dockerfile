@@ -1,15 +1,10 @@
-FROM rust:latest AS builder
+FROM rust:alpine AS builder
+
+RUN apk add --no-cache musl-dev pkgconfig openssl-dev perl make
 
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
-
-# Dummy build pour cacher les dépendances (lib + bin)
-RUN mkdir -p src && \
-    echo 'fn main() {}' > src/main.rs && \
-    echo '' > src/lib.rs && \
-    cargo build --release 2>/dev/null || true && \
-    rm -rf src
 
 COPY src/ ./src/
 COPY migrations/ ./migrations/
@@ -18,29 +13,21 @@ COPY public/ ./public/
 
 RUN cargo build --release
 
-RUN mkdir -p target/site && \
-    cp -r public/* target/site/ && \
-    mkdir -p target/site/_style && \
-    cp style/main.css target/site/main.css
-
-
-
-FROM debian:bookworm-slim
+FROM alpine:latest
 
 ARG APP_UID=1001
 ARG APP_GID=1001
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates libssl3 curl && \
-    rm -rf /var/lib/apt/lists/* && \
-    groupadd --system --gid ${APP_GID} fablab && \
-    useradd --system --no-create-home --uid ${APP_UID} --gid ${APP_GID} fablab
+RUN apk add --no-cache curl && \
+    addgroup -S -g ${APP_GID} fablab && \
+    adduser -S -G fablab -u ${APP_UID} fablab
 
 WORKDIR /app
 
 COPY --from=builder /app/target/release/fablab ./fablab
-COPY --from=builder /app/target/site ./target/site
-COPY migrations/ ./migrations/
+COPY --from=builder /app/migrations/ ./migrations/
+COPY --from=builder /app/style/ ./style/
+COPY --from=builder /app/public/ ./public/
 
 RUN mkdir -p /app/data /app/data/uploads && \
     chown -R fablab:fablab /app/data && \
@@ -51,6 +38,6 @@ USER ${APP_UID}:${APP_GID}
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:3000/ || exit 1
+    CMD curl -f http://127.0.0.1:3000/ || exit 1
 
 CMD ["./fablab"]

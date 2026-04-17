@@ -213,7 +213,7 @@ where
             "/orders",
             post(upload_order_handler).layer(DefaultBodyLimit::max(upload_limit)),
         )
-        .route("/files/{id}/download", get(download_file_handler))
+        .route("/admin/files/{id}/download", get(download_file_handler))
         .route("/admin/files/{id}/delete", post(delete_file_handler))
         .route("/my-orders/{id}/cancel", post(student_cancel_order_handler))
         .route("/admin/order/{id}/delete", post(admin_delete_order_handler))
@@ -297,12 +297,19 @@ async fn admin_login_handler(
     Form(form): Form<AdminLoginForm>,
 ) -> Response
 {
-    let result = state.admin_login.execute(&form.login, &form.password);
+    let admin_login = state.admin_login.clone();
+    let login = form.login;
+    let password = form.password;
+    let result = tokio::task::spawn_blocking(move ||
+    {
+        admin_login.execute(&login, &password)
+    })
+    .await;
 
     let admin = match result
     {
-        Ok(a) => a,
-        Err(_) =>
+        Ok(Ok(a)) => a,
+        _ =>
         {
             let _ = set_flash(
                 &session,

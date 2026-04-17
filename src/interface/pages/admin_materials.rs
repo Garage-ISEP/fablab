@@ -13,9 +13,15 @@ pub async fn fetch_all_materials() -> Result<Vec<Material>, ServerFnError>
     let _caller = extract_admin_caller().await?;
 
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
-    state.list_materials
-        .execute(false)
-        .map_err(|e| ServerFnError::new(format!("{e}")))
+    let list_materials = state.list_materials.clone();
+    tokio::task::spawn_blocking(move ||
+    {
+        list_materials
+            .execute(false)
+            .map_err(|e| ServerFnError::new(format!("{e}")))
+    })
+    .await
+    .map_err(|e| ServerFnError::new(format!("{e}")))?
 }
 
 #[server]
@@ -35,19 +41,6 @@ pub async fn upsert_material_action(
 
     let parsed_id = id.parse::<i64>()
         .map_err(|_| ServerFnError::new("id invalide"))?;
-
-    let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
-
-    let final_id = if parsed_id <= 0
-    {
-        state.manage_material
-            .next_id()
-            .map_err(|e| ServerFnError::new(format!("{e}")))?
-    }
-    else
-    {
-        parsed_id
-    };
 
     let validated_name = match validation::validate_material_name(&name)
     {
@@ -71,15 +64,35 @@ pub async fn upsert_material_action(
         }
     };
 
-    let material = Material
-    {
-        id: final_id,
-        name: validated_name,
-        color: validated_color,
-        available: available.is_some(),
-    };
+    let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
+    let manage_material = state.manage_material.clone();
+    let is_available = available.is_some();
 
-    match state.manage_material.execute(material)
+    let db_result = tokio::task::spawn_blocking(move ||
+    {
+        let final_id = if parsed_id <= 0
+        {
+            manage_material.next_id()?
+        }
+        else
+        {
+            parsed_id
+        };
+
+        let material = Material
+        {
+            id: final_id,
+            name: validated_name,
+            color: validated_color,
+            available: is_available,
+        };
+
+        manage_material.execute(material)
+    })
+    .await
+    .map_err(|e| ServerFnError::new(format!("{e}")))?;
+
+    match db_result
     {
         Ok(_) =>
         {

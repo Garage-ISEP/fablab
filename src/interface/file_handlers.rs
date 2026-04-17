@@ -327,7 +327,7 @@ fn create_order_from_fields(
     state.submit_order.execute(input)
 }
 
-/// GET /files/:id/download
+/// GET /admin/files/:id/download
 ///
 /// Streams the stored bytes to the authorized caller. Non-owners get
 /// 404, never 403 -- we never confirm that a file id exists.
@@ -338,10 +338,13 @@ pub async fn download_file_handler(
 ) -> Response
 {
     let role: Option<String> = session.get("role").await.ok().flatten();
-    let user_id: Option<i64> = session.get("user_id").await.ok().flatten();
-    let is_admin = role.as_deref() == Some("admin");
+    
+    if role.as_deref() != Some("admin") 
+    {
+        return (StatusCode::FORBIDDEN, "Accès réservé aux administrateurs").into_response();
+    }
 
-    let file = match state.download_order_file.authorize(file_id, is_admin, user_id)
+    let file = match state.download_order_file.authorize(file_id, true, None)
     {
         Ok(f) => f,
         Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
@@ -497,15 +500,26 @@ pub async fn admin_delete_material_handler(
         return (StatusCode::FORBIDDEN, "non autorise").into_response();
     }
 
-    match state.manage_material.delete(material_id)
+    let manage_material = state.manage_material.clone();
+    let result = tokio::task::spawn_blocking(move ||
     {
-        Ok(()) =>
+        manage_material.delete(material_id)
+    })
+    .await;
+
+    match result
+    {
+        Ok(Ok(())) =>
         {
             let _ = set_flash(&session, FlashLevel::Success, "Materiau supprime.").await;
         }
-        Err(e) =>
+        Ok(Err(e)) =>
         {
             let _ = set_flash(&session, FlashLevel::Error, user_message(&e)).await;
+        }
+        Err(_) =>
+        {
+            let _ = set_flash(&session, FlashLevel::Error, "Erreur interne.").await;
         }
     }
     Redirect::to("/admin/materials").into_response()

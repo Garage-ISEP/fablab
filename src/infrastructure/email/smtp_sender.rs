@@ -90,7 +90,7 @@ fn render_html(n: &OrderNotification) -> String
         .map(|f|
         {
             let name = escape_html(&f.original_filename);
-            let url = format!("{}/files/{}/download", n.download_base_url.trim_end_matches('/'), f.file_id);
+            let url = format!("{}/admin/files/{}/download", n.download_base_url.trim_end_matches('/'), f.file_id);
             let safe_url = escape_html(&url);
             let size_kb = (f.size_bytes + 1023) / 1024;
             format!(r#"<li style="margin-bottom:6px;"><a href="{safe_url}" style="color:#6E84D8;word-break:break-all;">{name}</a> <span style="color:#8A8A84;font-size:12px;">({size_kb} KB)</span></li>"#)

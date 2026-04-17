@@ -21,7 +21,7 @@ pub struct CasUser
     pub promo: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AdminUser
 {
     pub id: i64,

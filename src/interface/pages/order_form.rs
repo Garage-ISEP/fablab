@@ -9,9 +9,15 @@ use crate::interface::session_helpers::get_csrf_token;
 pub async fn fetch_available_materials() -> Result<Vec<Material>, ServerFnError>
 {
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
-    state.list_materials
-        .execute(true)
-        .map_err(|e| ServerFnError::new(format!("{e}")))
+    let list_materials = state.list_materials.clone();
+    tokio::task::spawn_blocking(move ||
+    {
+        list_materials
+            .execute(true)
+            .map_err(|e| ServerFnError::new(format!("{e}")))
+    })
+    .await
+    .map_err(|e| ServerFnError::new(format!("{e}")))?
 }
 
 #[server]
@@ -27,9 +33,15 @@ pub async fn fetch_user_phone() -> Result<Option<String>, ServerFnError>
     };
 
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
-    state.get_user_phone
-        .execute(user_id)
-        .map_err(|e| ServerFnError::new(format!("{e}")))
+    let get_user_phone = state.get_user_phone.clone();
+    tokio::task::spawn_blocking(move ||
+    {
+        get_user_phone
+            .execute(user_id)
+            .map_err(|e| ServerFnError::new(format!("{e}")))
+    })
+    .await
+    .map_err(|e| ServerFnError::new(format!("{e}")))?
 }
 
 #[server]

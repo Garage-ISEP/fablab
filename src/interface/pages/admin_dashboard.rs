@@ -82,9 +82,15 @@ pub async fn fetch_filtered_orders(
     let query = DashboardQuery { status, payment, search, sort_col, sort_dir };
 
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
-    state.list_orders
-        .execute_filtered(&caller, &query.to_filter(), query.to_sort())
-        .map_err(|e| ServerFnError::new(format!("{e}")))
+    let list_orders = state.list_orders.clone();
+    tokio::task::spawn_blocking(move ||
+    {
+        list_orders
+            .execute_filtered(&caller, &query.to_filter(), query.to_sort())
+            .map_err(|e| ServerFnError::new(format!("{e}")))
+    })
+    .await
+    .map_err(|e| ServerFnError::new(format!("{e}")))?
 }
 
 #[component]

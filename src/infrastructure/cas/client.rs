@@ -13,14 +13,16 @@ impl CasClient
 {
     pub fn new(base_url: String) -> Self
     {
+        let http = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| reqwest::blocking::Client::new());
+
         Self
         {
             base_url,
-            http: reqwest::blocking::Client::builder()
-                    .connect_timeout(std::time::Duration::from_secs(5))
-                    .timeout(std::time::Duration::from_secs(10))
-                    .build()
-                    .expect("failed to build HTTP client"),
+            http,
         }
     }
 

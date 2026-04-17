@@ -11,9 +11,15 @@ pub async fn fetch_my_orders() -> Result<Vec<OrderView>, ServerFnError>
     let caller = extract_student_caller().await?;
 
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
-    state.list_orders
-        .execute(&caller)
-        .map_err(|e| ServerFnError::new(format!("{e}")))
+    let list_orders = state.list_orders.clone();
+    tokio::task::spawn_blocking(move ||
+    {
+        list_orders
+            .execute(&caller)
+            .map_err(|e| ServerFnError::new(format!("{e}")))
+    })
+    .await
+    .map_err(|e| ServerFnError::new(format!("{e}")))?
 }
 
 #[component]

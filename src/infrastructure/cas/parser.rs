@@ -77,7 +77,24 @@ pub fn parse_cas_response(xml: &str) -> Result<CasUser, DomainError>
     let email = email
         .ok_or_else(|| DomainError::Validation("CAS response missing mail".to_owned()))?;
 
-    Ok(CasUser { cas_login, display_name, email, promo })
+    Ok(CasUser
+    {
+        cas_login: sanitize_cas_field(&cas_login),
+        display_name: sanitize_cas_field(&display_name),
+        email: sanitize_cas_field(&email),
+        promo: promo.as_deref().map(sanitize_cas_field),
+    })
+}
+
+/// Strip angle brackets and control characters from CAS-provided values
+/// to prevent stored XSS if they are ever rendered in HTML contexts.
+fn sanitize_cas_field(raw: &str) -> String
+{
+    raw.chars()
+        .filter(|c| !c.is_control() && *c != '<' && *c != '>')
+        .collect::<String>()
+        .trim()
+        .to_owned()
 }
 
 fn strip_ns(tag: &str) -> String
