@@ -108,6 +108,59 @@ impl OrderRepository for MockOrderRepo
             Ok(())
         }
     }
+
+    fn sum_weight_by_material(
+        &self,
+        material_id: i64,
+        exclude_order_id: Option<i64>,
+    ) -> Result<f64, DomainError>
+    {
+        let orders = self.orders.lock().unwrap();
+        let sum = orders.iter()
+            .filter(|o| o.material_id == Some(material_id))
+            .filter(|o| o.status != OrderStatus::Annule)
+            .filter(|o| match exclude_order_id
+            {
+                Some(excl) => o.id != excl,
+                None => true,
+            })
+            .filter_map(|o| o.sliced_weight_grams)
+            .sum();
+        Ok(sum)
+    }
+
+    fn update_if_stock_sufficient(
+        &self,
+        order: &Order,
+        spool_weight_grams: f64,
+    ) -> Result<(), DomainError>
+    {
+        // Mirrors the SQLite implementation: read the sum excluding
+        // the target order, run the domain-level stock check, and
+        // commit the update only on success.
+        let material_id = order.material_id.ok_or_else(||
+            DomainError::Validation("order must have a material".to_owned())
+        )?;
+        let requested = order.sliced_weight_grams.ok_or_else(||
+            DomainError::Validation("order must have a weight".to_owned())
+        )?;
+
+        let consumed = self.sum_weight_by_material(material_id, Some(order.id))?;
+        fablab::domain::stock::check_sufficient(
+            material_id, spool_weight_grams, consumed, requested,
+        )?;
+
+        let mut orders = self.orders.lock().unwrap();
+        if let Some(existing) = orders.iter_mut().find(|o| o.id == order.id)
+        {
+            *existing = order.clone();
+            Ok(())
+        }
+        else
+        {
+            Err(DomainError::OrderNotFound { id: order.id })
+        }
+    }
 }
 
 struct MockUserRepo
@@ -437,6 +490,45 @@ fn seed_order(repo: &MockOrderRepo, user_id: i64) -> Order
     .unwrap()
 }
 
+/// Inserts a material into the mock repo with a chosen id, availability
+/// and spool weight. Used by update-order tests that need a material
+/// attached to exercise stock or transition rules.
+fn seed_material(
+    repo: &MockMaterialRepo,
+    id: i64,
+    available: bool,
+    spool_weight_grams: f64,
+) -> Material
+{
+    let mat = Material
+    {
+        id,
+        name: format!("PLA-{id}"),
+        color: "Noir".to_owned(),
+        available,
+        spool_weight_grams,
+    };
+    repo.upsert(&mat).unwrap();
+    mat
+}
+
+fn seed_order_with_material(
+    repo: &MockOrderRepo,
+    user_id: i64,
+    material_id: i64,
+) -> Order
+{
+    repo.create(NewOrder
+    {
+        user_id,
+        software_used: "Cura".to_owned(),
+        material_id: Some(material_id),
+        quantity: 1,
+        comments: None,
+    })
+    .unwrap()
+}
+
 // ============================================================================
 // submit_order tests
 // ============================================================================
@@ -637,7 +729,8 @@ async fn update_order_admin_can_update()
         Arc::new(MockFileStorage::default());
     let purge = Arc::new(PurgeOrderFilesUseCase::new(order_files, storage));
 
-    let order = seed_order(&orders, 1);
+    seed_material(&materials, 1, true, 1000.0);
+    let order = seed_order_with_material(&orders, 1, 1);
 
     let uc = UpdateOrderUseCase::new(orders, users, materials, purge);
 
@@ -648,6 +741,7 @@ async fn update_order_admin_can_update()
         requires_payment: Some(true),
         sliced_weight_grams: Some(25.0),
         print_time_minutes: Some(120),
+        material_id: None,
     };
 
     let view = uc.execute(input, &Caller::Admin).await.expect("update_order admin failed");
@@ -678,6 +772,7 @@ async fn update_order_student_is_rejected()
         requires_payment: Some(true),
         sliced_weight_grams: None,
         print_time_minutes: None,
+        material_id: None,
     };
 
     let caller = Caller::Student { user_id: 1 };
@@ -697,7 +792,8 @@ async fn update_order_invalid_status_transition_rejected()
         Arc::new(MockFileStorage::default());
     let purge = Arc::new(PurgeOrderFilesUseCase::new(order_files, storage));
 
-    let _order = seed_order(&orders, 1);
+    seed_material(&materials, 1, true, 1000.0);
+    let _order = seed_order_with_material(&orders, 1, 1);
 
     let uc = UpdateOrderUseCase::new(orders, users, materials, purge);
 
@@ -708,6 +804,7 @@ async fn update_order_invalid_status_transition_rejected()
         requires_payment: None,
         sliced_weight_grams: None,
         print_time_minutes: None,
+        material_id: None,
     };
 
     let result = uc.execute(input, &Caller::Admin).await;
@@ -737,6 +834,7 @@ async fn update_order_rejects_negative_weight()
         requires_payment: None,
         sliced_weight_grams: Some(-5.0),
         print_time_minutes: None,
+        material_id: None,
     };
 
     let result = uc.execute(input, &Caller::Admin).await;
@@ -766,11 +864,224 @@ async fn update_order_rejects_negative_print_time()
         requires_payment: None,
         sliced_weight_grams: None,
         print_time_minutes: Some(-10),
+        material_id: None,
     };
 
     let result = uc.execute(input, &Caller::Admin).await;
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), AppError::InvalidInput(_)));
+}
+
+// ----------------------------------------------------------------------------
+// update_order — material change, stock check, advancement invariant
+// ----------------------------------------------------------------------------
+
+/// Shared test scaffolding for the new material/stock-related tests.
+fn build_update_uc() -> (
+    Arc<MockOrderRepo>,
+    Arc<MockMaterialRepo>,
+    UpdateOrderUseCase<MockOrderRepo, MockUserRepo, MockMaterialRepo, MockOrderFileRepo>,
+)
+{
+    let orders = Arc::new(MockOrderRepo::default());
+    let users = Arc::new(MockUserRepo::new(vec![test_user()]));
+    let materials = Arc::new(MockMaterialRepo::default());
+    let order_files = Arc::new(MockOrderFileRepo::default());
+    let storage: Arc<dyn fablab::domain::repositories::FileStorage> =
+        Arc::new(MockFileStorage::default());
+    let purge = Arc::new(PurgeOrderFilesUseCase::new(order_files, storage));
+
+    let uc = UpdateOrderUseCase::new(
+        Arc::clone(&orders),
+        users,
+        Arc::clone(&materials),
+        purge,
+    );
+    (orders, materials, uc)
+}
+
+#[tokio::test]
+async fn update_order_rejects_unknown_material()
+{
+    let (orders, materials, uc) = build_update_uc();
+    seed_material(&materials, 1, true, 1000.0);
+    let order = seed_order_with_material(&orders, 1, 1);
+
+    let input = UpdateOrderInput
+    {
+        order_id: order.id,
+        status: None,
+        requires_payment: None,
+        sliced_weight_grams: None,
+        print_time_minutes: None,
+        material_id: Some(999),
+    };
+
+    let result = uc.execute(input, &Caller::Admin).await;
+    assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
+}
+
+#[tokio::test]
+async fn update_order_rejects_unavailable_material()
+{
+    let (orders, materials, uc) = build_update_uc();
+    seed_material(&materials, 1, true, 1000.0);
+    seed_material(&materials, 2, false, 1000.0); // unavailable target
+    let order = seed_order_with_material(&orders, 1, 1);
+
+    let input = UpdateOrderInput
+    {
+        order_id: order.id,
+        status: None,
+        requires_payment: None,
+        sliced_weight_grams: None,
+        print_time_minutes: None,
+        material_id: Some(2),
+    };
+
+    let result = uc.execute(input, &Caller::Admin).await;
+    assert!(matches!(result.unwrap_err(), AppError::InvalidInput(_)));
+}
+
+#[tokio::test]
+async fn update_order_rejects_weight_exceeding_stock()
+{
+    let (orders, materials, uc) = build_update_uc();
+    // 500g spool. Existing order on this material consuming 300g (active)
+    // plus the order under test that will try to claim 400g → 700g > 500g.
+    seed_material(&materials, 1, true, 500.0);
+
+    let consumer = seed_order_with_material(&orders, 1, 1);
+    let mut c = consumer.clone();
+    c.sliced_weight_grams = Some(300.0);
+    orders.update(&c).unwrap();
+
+    let order = seed_order_with_material(&orders, 1, 1);
+
+    let input = UpdateOrderInput
+    {
+        order_id: order.id,
+        status: None,
+        requires_payment: None,
+        sliced_weight_grams: Some(400.0),
+        print_time_minutes: None,
+        material_id: None,
+    };
+
+    let result = uc.execute(input, &Caller::Admin).await;
+    assert!(matches!(result.unwrap_err(), AppError::InvalidInput(_)));
+
+    // The order must not have been mutated since the transactional
+    // update path rolls back on stock failure.
+    let reloaded = orders.find_by_id(order.id).unwrap().unwrap();
+    assert_eq!(reloaded.sliced_weight_grams, None);
+}
+
+#[tokio::test]
+async fn update_order_cannot_advance_without_material()
+{
+    let (orders, _materials, uc) = build_update_uc();
+    let order = seed_order(&orders, 1); // no material attached
+
+    let input = UpdateOrderInput
+    {
+        order_id: order.id,
+        status: Some("en_traitement".to_owned()),
+        requires_payment: None,
+        sliced_weight_grams: None,
+        print_time_minutes: None,
+        material_id: None,
+    };
+
+    let result = uc.execute(input, &Caller::Admin).await;
+    assert!(matches!(result.unwrap_err(), AppError::InvalidInput(_)));
+}
+
+#[tokio::test]
+async fn update_order_can_cancel_without_material()
+{
+    // Cancellation must always be reachable — even for orders that
+    // were never assigned a material, because users can abandon a
+    // pending request before the admin picks a spool.
+    let (orders, _materials, uc) = build_update_uc();
+    let order = seed_order(&orders, 1);
+
+    let input = UpdateOrderInput
+    {
+        order_id: order.id,
+        status: Some("annule".to_owned()),
+        requires_payment: None,
+        sliced_weight_grams: None,
+        print_time_minutes: None,
+        material_id: None,
+    };
+
+    let view = uc.execute(input, &Caller::Admin).await
+        .expect("cancellation without material should succeed");
+    assert_eq!(view.status, "annule");
+}
+
+#[tokio::test]
+async fn update_order_can_change_material_when_stock_fits()
+{
+    let (orders, materials, uc) = build_update_uc();
+    // Two materials, both with ample spool. Moving the order from
+    // material 1 to material 2 should succeed and persist.
+    seed_material(&materials, 1, true, 1000.0);
+    seed_material(&materials, 2, true, 1000.0);
+    let order = seed_order_with_material(&orders, 1, 1);
+
+    let input = UpdateOrderInput
+    {
+        order_id: order.id,
+        status: None,
+        requires_payment: None,
+        sliced_weight_grams: Some(50.0),
+        print_time_minutes: None,
+        material_id: Some(2),
+    };
+
+    let view = uc.execute(input, &Caller::Admin).await
+        .expect("material swap should succeed");
+    assert_eq!(view.material_label.as_deref(), Some("PLA-2 - Noir"));
+    assert_eq!(view.sliced_weight_grams, Some(50.0));
+
+    let reloaded = orders.find_by_id(order.id).unwrap().unwrap();
+    assert_eq!(reloaded.material_id, Some(2));
+}
+
+#[tokio::test]
+async fn update_order_rejects_material_swap_when_target_full()
+{
+    let (orders, materials, uc) = build_update_uc();
+    // Target material (id 2) is almost full: an existing active order
+    // already consumes 900g of the 1000g spool.
+    seed_material(&materials, 1, true, 1000.0);
+    seed_material(&materials, 2, true, 1000.0);
+
+    let hog = seed_order_with_material(&orders, 1, 2);
+    let mut h = hog.clone();
+    h.sliced_weight_grams = Some(900.0);
+    orders.update(&h).unwrap();
+
+    let order = seed_order_with_material(&orders, 1, 1);
+
+    let input = UpdateOrderInput
+    {
+        order_id: order.id,
+        status: None,
+        requires_payment: None,
+        sliced_weight_grams: Some(200.0),
+        print_time_minutes: None,
+        material_id: Some(2), // swap → would push total to 1100g
+    };
+
+    let result = uc.execute(input, &Caller::Admin).await;
+    assert!(matches!(result.unwrap_err(), AppError::InvalidInput(_)));
+
+    // Swap rolled back: order should still point at material 1.
+    let reloaded = orders.find_by_id(order.id).unwrap().unwrap();
+    assert_eq!(reloaded.material_id, Some(1));
 }
 
 // ============================================================================
@@ -970,6 +1281,7 @@ fn make_view(id: i64) -> OrderView
         created_at: "2026-04-13T00:00:00".to_owned(),
         files: Vec::new(),
         software_used: String::new(),
+        material_id: None,
         material_label: None,
         quantity: 1,
         comments: None,

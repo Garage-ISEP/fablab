@@ -1,23 +1,42 @@
 use leptos::prelude::*;
 use leptos::form::ActionForm;
+use serde::{Deserialize, Serialize};
 
 use crate::application::dtos::order_output::OrderView;
+use crate::domain::material::Material;
 use crate::interface::components::csrf_field::CsrfField;
 use crate::interface::components::flash_message::FlashMessage;
 use crate::interface::session_helpers::extract_admin_caller;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderEditContext
+{
+    pub order: OrderView,
+    pub available_materials: Vec<Material>,
+}
+
 #[server]
-pub async fn fetch_order_detail(order_id: i64) -> Result<OrderView, ServerFnError>
+pub async fn fetch_order_edit_context(order_id: i64) -> Result<OrderEditContext, ServerFnError>
 {
     let caller = extract_admin_caller().await?;
 
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
     let get_order = state.get_order.clone();
+    let list_materials = state.list_materials.clone();
+
     tokio::task::spawn_blocking(move ||
     {
-        get_order
+        let order = get_order
             .execute(order_id, &caller)
-            .map_err(|e| ServerFnError::new(format!("{e}")))
+            .map_err(|e| ServerFnError::new(format!("{e}")))?;
+        let materials = list_materials
+            .execute(true)
+            .map_err(|e| ServerFnError::new(format!("{e}")))?;
+        Ok::<_, ServerFnError>(OrderEditContext
+        {
+            order,
+            available_materials: materials,
+        })
     })
     .await
     .map_err(|e| ServerFnError::new(format!("{e}")))?
@@ -30,6 +49,7 @@ pub async fn update_order_action(
     requires_payment: Option<String>,
     sliced_weight_grams: String,
     print_time_minutes: String,
+    material_id: String,
 ) -> Result<(), ServerFnError>
 {
     use tower_sessions::Session;
@@ -43,6 +63,12 @@ pub async fn update_order_action(
     let oid = order_id.parse::<i64>()
         .map_err(|_| ServerFnError::new("id invalide"))?;
 
+    let material_id_opt = match material_id.trim()
+    {
+        "" => None,
+        s => s.parse::<i64>().ok().filter(|&n| n > 0),
+    };
+
     let input = UpdateOrderInput
     {
         order_id: oid,
@@ -50,6 +76,7 @@ pub async fn update_order_action(
         requires_payment: Some(requires_payment.is_some()),
         sliced_weight_grams: sliced_weight_grams.parse::<f64>().ok(),
         print_time_minutes: print_time_minutes.parse::<i32>().ok(),
+        material_id: material_id_opt,
     };
 
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
@@ -81,7 +108,7 @@ pub fn AdminOrderEditPage() -> impl IntoView
             .unwrap_or(0)
     };
 
-    let order = Resource::new(order_id, fetch_order_detail);
+    let ctx = Resource::new(order_id, fetch_order_edit_context);
 
     view!
     {
@@ -90,11 +117,11 @@ pub fn AdminOrderEditPage() -> impl IntoView
             <Suspense fallback=|| view! { <p class="loading">"Chargement..."</p> }>
                 {move ||
                 {
-                    order.get().map(|result|
+                    ctx.get().map(|result|
                     {
                         match result
                         {
-                            Ok(o) => render_order_detail(o).into_any(),
+                            Ok(c) => render_order_detail(c.order, c.available_materials).into_any(),
                             Err(_) =>
                             {
                                 view!
@@ -113,7 +140,7 @@ pub fn AdminOrderEditPage() -> impl IntoView
     }
 }
 
-fn render_order_detail(o: OrderView) -> impl IntoView
+fn render_order_detail(o: OrderView, available_materials: Vec<Material>) -> impl IntoView
 {
     let files = o.files.clone();
     let oid = o.id.to_string();
@@ -128,10 +155,13 @@ fn render_order_detail(o: OrderView) -> impl IntoView
     let order_is_terminal = is_livre || is_annule;
 
     let display_name = o.user_display_name.clone();
-    let material = o.material_label.clone().unwrap_or_else(|| "-".to_owned());
+    let material_display = o.material_label.clone().unwrap_or_else(|| "Pas de preference".to_owned());
     let comments_val = o.comments.clone().unwrap_or_else(|| "-".to_owned());
     let software = o.software_used.clone();
     let date = o.created_at.clone();
+
+    let order_has_material = o.material_id.is_some();
+    let current_material_id = o.material_id;
 
     let update_action = ServerAction::<UpdateOrderAction>::new();
     let delete_order_action = format!("/admin/order/{oid_for_delete}/delete");
@@ -150,7 +180,7 @@ fn render_order_detail(o: OrderView) -> impl IntoView
                     <dt>"Client"</dt><dd>{display_name}</dd>
                     <dt>"Date"</dt><dd>{date}</dd>
                     <dt>"Logiciel"</dt><dd>{software}</dd>
-                    <dt>"Materiau"</dt><dd>{material}</dd>
+                    <dt>"Materiau actuel"</dt><dd>{material_display}</dd>
                     <dt>"Quantite"</dt><dd>{o.quantity}</dd>
                     <dt>"Commentaires"</dt><dd>{comments_val}</dd>
                 </dl>
@@ -210,6 +240,43 @@ fn render_order_detail(o: OrderView) -> impl IntoView
                             <option value="imprime" selected=is_imprime>"Imprime"</option>
                             <option value="livre" selected=is_livre>"Livre"</option>
                             <option value="annule" selected=is_annule>"Annule"</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="material_id">"Materiau"</label>
+                        <select id="material_id" name="material_id">
+                            {(!order_has_material).then(||
+                            {
+                                view!
+                                {
+                                    <option value="" selected=true>"-- Pas de preference --"</option>
+                                }
+                            })}
+                            {
+                                let mut options: Vec<_> = available_materials
+                                    .iter()
+                                    .map(|m| (m.id, m.label()))
+                                    .collect();
+                                if let Some(cur_id) = current_material_id
+                                {
+                                    let already_listed = options.iter().any(|(id, _)| *id == cur_id);
+                                    if !already_listed
+                                        && let Some(current_label) = o.material_label.clone()
+                                        {
+                                            options.insert(0, (cur_id, format!("{current_label} (indisponible)")));
+                                        }
+                                }
+                                options.into_iter().map(|(mid, label)|
+                                {
+                                    let mid_str = mid.to_string();
+                                    let selected = current_material_id == Some(mid);
+                                    view!
+                                    {
+                                        <option value=mid_str selected=selected>{label}</option>
+                                    }
+                                }).collect::<Vec<_>>()
+                            }
                         </select>
                     </div>
 

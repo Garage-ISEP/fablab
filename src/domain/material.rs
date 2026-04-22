@@ -7,6 +7,7 @@ pub struct Material
     pub name: String,
     pub color: String,
     pub available: bool,
+    pub spool_weight_grams: f64,
 }
 
 impl Material

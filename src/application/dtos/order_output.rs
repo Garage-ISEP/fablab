@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::domain::material::Material;
 use crate::domain::order::Order;
 use crate::domain::order_file::OrderFile;
 
@@ -33,6 +34,7 @@ pub struct OrderView
     pub created_at: String,
     pub files: Vec<OrderFileView>,
     pub software_used: String,
+    pub material_id: Option<i64>,
     pub material_label: Option<String>,
     pub quantity: i32,
     pub comments: Option<String>,
@@ -59,6 +61,7 @@ impl OrderView
             created_at: order.created_at.clone(),
             files,
             software_used: order.software_used.clone(),
+            material_id: order.material_id,
             material_label,
             quantity: order.quantity,
             comments: order.comments.clone(),
@@ -66,6 +69,37 @@ impl OrderView
             requires_payment: order.requires_payment,
             sliced_weight_grams: order.sliced_weight_grams,
             print_time_minutes: order.print_time_minutes,
+        }
+    }
+}
+
+/// Admin-facing material view enriched with derived stock data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MaterialView
+{
+    pub id: i64,
+    pub name: String,
+    pub color: String,
+    pub label: String,
+    pub available: bool,
+    pub spool_weight_grams: f64,
+    pub remaining_weight_grams: f64,
+}
+
+impl MaterialView
+{
+    pub fn from_material(material: &Material, consumed_grams: f64) -> Self
+    {
+        Self
+        {
+            id: material.id,
+            name: material.name.clone(),
+            color: material.color.clone(),
+            label: material.label(),
+            available: material.available,
+            spool_weight_grams: material.spool_weight_grams,
+            remaining_weight_grams:
+                crate::domain::stock::remaining_weight(material.spool_weight_grams, consumed_grams),
         }
     }
 }

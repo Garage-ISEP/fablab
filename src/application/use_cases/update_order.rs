@@ -6,7 +6,8 @@ use crate::application::dtos::order_input::UpdateOrderInput;
 use crate::application::dtos::order_output::OrderView;
 use crate::application::errors::AppError;
 use crate::application::use_cases::order_files::PurgeOrderFilesUseCase;
-use crate::domain::order::OrderStatus;
+use crate::domain::material::Material;
+use crate::domain::order::{Order, OrderStatus};
 use crate::domain::repositories::
 {
     MaterialRepository, OrderFileRepository, OrderRepository, UserRepository,
@@ -60,10 +61,24 @@ where
 
         let previous_status = order.status;
 
+        if let Some(new_mid) = input.material_id
+        {
+            let material = self.materials
+                .find_by_id(new_mid)?
+                .ok_or_else(|| AppError::NotFound(format!("material {new_mid}")))?;
+            if !material.available
+            {
+                return Err(AppError::InvalidInput(
+                    "le materiau selectionne n'est pas disponible".to_owned(),
+                ));
+            }
+            order.material_id = Some(new_mid);
+        }
+
         if let Some(ref status_str) = input.status
         {
             let new_status = OrderStatus::from_str(status_str)?;
-            order.status = order.status.transition_to(new_status)?;
+            order.status = order.try_advance_status(new_status)?;
         }
 
         if let Some(rp) = input.requires_payment
@@ -79,12 +94,19 @@ where
             order.print_time_minutes = Some(t);
         }
 
-        self.orders.update(&order)?;
+        match (order.material_id, order.sliced_weight_grams)
+        {
+            (Some(mid), Some(_)) =>
+            {
+                let material = self.load_material(mid)?;
+                self.orders.update_if_stock_sufficient(&order, material.spool_weight_grams)?;
+            }
+            _ =>
+            {
+                self.orders.update(&order)?;
+            }
+        }
 
-        // If we just transitioned into a terminal state, drop the
-        // attached files. Already-terminal orders (no transition) are
-        // left untouched: their files were purged at the original
-        // transition.
         let became_terminal = previous_status != order.status
             && matches!(order.status, OrderStatus::Livre | OrderStatus::Annule);
         if became_terminal
@@ -92,6 +114,18 @@ where
             self.purge.execute(order.id).await?;
         }
 
+        self.build_view(order)
+    }
+
+    fn load_material(&self, material_id: i64) -> Result<Material, AppError>
+    {
+        self.materials
+            .find_by_id(material_id)?
+            .ok_or_else(|| AppError::NotFound(format!("material {material_id}")))
+    }
+
+    fn build_view(&self, order: Order) -> Result<OrderView, AppError>
+    {
         let user = self.users
             .find_by_id(order.user_id)?
             .ok_or_else(|| AppError::NotFound(format!("user {}", order.user_id)))?;

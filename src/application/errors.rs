@@ -28,6 +28,15 @@ impl From<DomainError> for AppError
             DomainError::AdminNotFound { login } => AppError::NotFound(format!("admin {login}")),
             DomainError::InvalidStatusTransition { from, to } =>
                 AppError::InvalidInput(format!("invalid status transition: {from} -> {to}")),
+            DomainError::InsufficientStock { material_id, requested_grams, available_grams } =>
+                AppError::InvalidInput(format!(
+                    "stock insuffisant pour le materiau {material_id}: \
+                     demande {requested_grams:.1}g, disponible {available_grams:.1}g"
+                )),
+            DomainError::MaterialRequiredForStatus { target } =>
+                AppError::InvalidInput(format!(
+                    "un materiau doit etre defini avant de passer la commande au statut '{target}'"
+                )),
             DomainError::Validation(msg) => AppError::InvalidInput(msg),
             DomainError::Database(msg) => AppError::Database(msg),
         }

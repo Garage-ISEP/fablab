@@ -1,14 +1,14 @@
 use leptos::prelude::*;
 use leptos::server_fn::ServerFn;
 
-use crate::domain::material::Material;
+use crate::application::dtos::order_output::MaterialView;
 
 use crate::interface::components::csrf_field::CsrfField;
 use crate::interface::components::flash_message::FlashMessage;
 use crate::interface::session_helpers::extract_admin_caller;
 
 #[server]
-pub async fn fetch_all_materials() -> Result<Vec<Material>, ServerFnError>
+pub async fn fetch_all_materials_with_stock() -> Result<Vec<MaterialView>, ServerFnError>
 {
     let _caller = extract_admin_caller().await?;
 
@@ -17,7 +17,7 @@ pub async fn fetch_all_materials() -> Result<Vec<Material>, ServerFnError>
     tokio::task::spawn_blocking(move ||
     {
         list_materials
-            .execute(false)
+            .execute_with_stock(false)
             .map_err(|e| ServerFnError::new(format!("{e}")))
     })
     .await
@@ -29,10 +29,12 @@ pub async fn upsert_material_action(
     id: String,
     name: String,
     color: String,
+    spool_weight_grams: String,
     available: Option<String>,
 ) -> Result<(), ServerFnError>
 {
     use tower_sessions::Session;
+    use crate::domain::material::Material;
     use crate::interface::flash::{FlashLevel, set_flash};
     use crate::application::validation;
 
@@ -64,6 +66,36 @@ pub async fn upsert_material_action(
         }
     };
 
+    let parsed_weight = match spool_weight_grams.trim().parse::<f64>()
+    {
+        Ok(w) => w,
+        Err(_) =>
+        {
+            let _ = set_flash(
+                &session,
+                FlashLevel::Error,
+                "Le poids de la bobine doit etre un nombre.",
+            ).await;
+            leptos_axum::redirect("/admin/materials");
+            return Ok(());
+        }
+    };
+
+    let validated_weight = match validation::validate_spool_weight_grams(parsed_weight)
+    {
+        Ok(w) => w,
+        Err(_) =>
+        {
+            let _ = set_flash(
+                &session,
+                FlashLevel::Error,
+                "Le poids de la bobine doit etre strictement positif.",
+            ).await;
+            leptos_axum::redirect("/admin/materials");
+            return Ok(());
+        }
+    };
+
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
     let manage_material = state.manage_material.clone();
     let is_available = available.is_some();
@@ -85,6 +117,7 @@ pub async fn upsert_material_action(
             name: validated_name,
             color: validated_color,
             available: is_available,
+            spool_weight_grams: validated_weight,
         };
 
         manage_material.execute(material)
@@ -111,7 +144,7 @@ pub async fn upsert_material_action(
 #[component]
 pub fn AdminMaterialsPage() -> impl IntoView
 {
-    let materials = Resource::new(|| (), |_| fetch_all_materials());
+    let materials = Resource::new(|| (), |_| fetch_all_materials_with_stock());
 
     view!
     {
@@ -147,6 +180,8 @@ pub fn AdminMaterialsPage() -> impl IntoView
                                             <tr>
                                                 <th>"Nom"</th>
                                                 <th>"Couleur"</th>
+                                                <th>"Poids bobine"</th>
+                                                <th>"Stock restant"</th>
                                                 <th>"Disponible"</th>
                                                 <th>"Actions"</th>
                                             </tr>
@@ -187,6 +222,20 @@ pub fn AdminMaterialsPage() -> impl IntoView
                             <input id="new-color" name="color" type="text" required placeholder="Noir mat, Rouge translucide..." />
                         </div>
                     </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="new-spool-weight">"Poids bobine (g)"</label>
+                            <input
+                                id="new-spool-weight"
+                                name="spool_weight_grams"
+                                type="number"
+                                step="0.1"
+                                min="0.1"
+                                value="1000"
+                                required
+                            />
+                        </div>
+                    </div>
                     <div class="form-group checkbox-group">
                         <label>
                             <input type="checkbox" name="available" checked />
@@ -200,19 +249,39 @@ pub fn AdminMaterialsPage() -> impl IntoView
     }
 }
 
-fn render_material_row(m: Material) -> impl IntoView
+fn render_material_row(m: MaterialView) -> impl IntoView
 {
     let mid = m.id.to_string();
     let delete_action = format!("/admin/materials/{}/delete", m.id);
     let name = m.name.clone();
     let color = m.color.clone();
+    let spool = m.spool_weight_grams;
+    let remaining = m.remaining_weight_grams;
+    let spool_str = format!("{spool:.1} g");
+    let remaining_str = format!("{remaining:.1} g");
     let toggle_checked = !m.available;
+    let spool_hidden = format!("{spool}");
+
+    let stock_class = if remaining < 0.0
+    {
+        "stock-overdraft"
+    }
+    else if remaining < spool * 0.10
+    {
+        "stock-low"
+    }
+    else
+    {
+        "stock-ok"
+    };
 
     view!
     {
         <tr>
             <td class="td-name">{name.clone()}</td>
             <td>{color.clone()}</td>
+            <td>{spool_str}</td>
+            <td class=stock_class>{remaining_str}</td>
             <td>
                 {if m.available
                 {
@@ -229,6 +298,7 @@ fn render_material_row(m: Material) -> impl IntoView
                     <input type="hidden" name="id" value=mid />
                     <input type="hidden" name="name" value=name />
                     <input type="hidden" name="color" value=color />
+                    <input type="hidden" name="spool_weight_grams" value=spool_hidden />
                     {if toggle_checked
                     {
                         Some(view! { <input type="hidden" name="available" value="on" /> })

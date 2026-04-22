@@ -26,10 +26,11 @@ fn row_to_material(row: &rusqlite::Row<'_>) -> rusqlite::Result<Material>
         name: row.get(1)?,
         color: row.get(2)?,
         available: available_int != 0,
+        spool_weight_grams: row.get(4)?,
     })
 }
 
-const SELECT_COLS: &str = "id, name, color, available";
+const SELECT_COLS: &str = "id, name, color, available, spool_weight_grams";
 
 impl MaterialRepository for SqliteMaterialRepository
 {
@@ -117,17 +118,19 @@ impl MaterialRepository for SqliteMaterialRepository
         self.pool.with_conn(|conn|
         {
             conn.execute(
-                "INSERT INTO materials (id, name, color, available) \
-                 VALUES (?1, ?2, ?3, ?4) \
+                "INSERT INTO materials (id, name, color, available, spool_weight_grams) \
+                 VALUES (?1, ?2, ?3, ?4, ?5) \
                  ON CONFLICT(id) DO UPDATE SET \
                      name = excluded.name, \
                      color = excluded.color, \
-                     available = excluded.available",
+                     available = excluded.available, \
+                     spool_weight_grams = excluded.spool_weight_grams",
                 rusqlite::params![
                     material.id,
                     material.name,
                     material.color,
                     i64::from(material.available),
+                    material.spool_weight_grams,
                 ],
             )
             .map_err(|e| DomainError::Database(e.to_string()))?;

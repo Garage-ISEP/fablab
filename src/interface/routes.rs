@@ -57,7 +57,8 @@ type ConcreteGetOrder = GetOrderUseCase<
     SqliteMaterialRepository,
     SqliteOrderFileRepository,
 >;
-type ConcreteListMaterials = ListMaterialsUseCase<SqliteMaterialRepository>;
+type ConcreteListMaterials =
+    ListMaterialsUseCase<SqliteMaterialRepository, SqliteOrderRepository>;
 type ConcreteManageMaterial = ManageMaterialUseCase<SqliteMaterialRepository>;
 type ConcreteUpdatePhone = UpdatePhoneUseCase<SqliteUserRepository>;
 type ConcreteGetUserPhone = GetUserPhoneUseCase<SqliteUserRepository>;

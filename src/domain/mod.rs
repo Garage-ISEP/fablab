@@ -4,4 +4,5 @@ pub mod notifications;
 pub mod order;
 pub mod order_file;
 pub mod repositories;
+pub mod stock;
 pub mod user;

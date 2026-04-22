@@ -204,7 +204,10 @@ async fn main()
         Arc::clone(&material_repo),
         Arc::clone(&order_file_repo),
     ));
-    let list_materials = Arc::new(ListMaterialsUseCase::new(Arc::clone(&material_repo)));
+    let list_materials = Arc::new(ListMaterialsUseCase::new(
+        Arc::clone(&material_repo),
+        Arc::clone(&order_repo),
+    ));
     let manage_material = Arc::new(ManageMaterialUseCase::new(Arc::clone(&material_repo)));
     let update_phone = Arc::new(UpdatePhoneUseCase::new(Arc::clone(&user_repo)));
     let get_user_phone = Arc::new(GetUserPhoneUseCase::new(Arc::clone(&user_repo)));

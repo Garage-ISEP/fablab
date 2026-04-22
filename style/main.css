@@ -529,10 +529,63 @@ a:hover { color: var(--color-primary-hover); }
 .data-table tbody tr:last-child td { border-bottom: none; }
 .data-table td a { font-weight: 500; }
 
+.data-table tbody tr.clickable-row
+{
+    position: relative;
+    cursor: pointer;
+}
+
+.data-table tbody tr.clickable-row .row-link
+{
+    position: static;
+}
+
+.data-table tbody tr.clickable-row .row-link::before
+{
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+}
+
+.data-table tbody tr.clickable-row form,
+.data-table tbody tr.clickable-row button,
+.data-table tbody tr.clickable-row a:not(.row-link)
+{
+    position: relative;
+    z-index: 2;
+}
+
 .td-name
 {
     font-weight: 500;
     color: var(--color-text);
+}
+
+/* ------------------------------------------------------------
+   Stock indicators (admin materials table)
+   ------------------------------------------------------------ */
+.stock-ok
+{
+    color: var(--color-success);
+    font-weight: 500;
+}
+
+.stock-low
+{
+    color: var(--color-warning);
+    font-weight: 600;
+}
+
+.stock-overdraft
+{
+    color: var(--color-danger);
+    font-weight: 700;
+}
+
+.table-scroll
+{
+    width: 100%;
 }
 
 /* Sortable headers (declared once, used everywhere) */
@@ -909,4 +962,109 @@ a:hover { color: var(--color-primary-hover); }
 
     .detail-list    { grid-template-columns: 1fr; gap: 0.125rem 0; }
     .detail-list dt { margin-top: 0.5rem; }
+
+    /* --- Admin orders table: horizontal scroll with sticky id column.
+       Nine columns don't collapse gracefully on mobile, and admins
+       typically compare rows side-by-side — keeping the tabular
+       layout is the right call. The id column stays pinned so the
+       user never loses their reference point while scrolling. --- */
+    .table-scroll--admin
+    {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .table-scroll--admin .data-table
+    {
+        min-width: 720px;
+    }
+
+    .table-scroll--admin .data-table th:first-child,
+    .table-scroll--admin .data-table td:first-child
+    {
+        position: sticky;
+        left: 0;
+        background: var(--color-surface);
+        z-index: 2;
+    }
+
+    .table-scroll--admin .data-table tbody tr:hover td:first-child
+    {
+        background: var(--color-surface-2);
+    }
+}
+
+/* --- Client orders table: stacked cards below 640px.
+   Only seven columns on this view, and users read one order at a
+   time rather than comparing — vertical layout is more natural
+   than side-scrolling. Each <td> reveals its column name through
+   a `data-label` attribute turned into a `::before` pseudo-element. --- */
+@media (max-width: 640px)
+{
+    .table-scroll--client .data-table,
+    .table-scroll--client .data-table thead,
+    .table-scroll--client .data-table tbody,
+    .table-scroll--client .data-table tr,
+    .table-scroll--client .data-table td
+    {
+        display: block;
+        width: 100%;
+    }
+
+    .table-scroll--client .data-table thead
+    {
+        /* Visually hidden but kept in the accessibility tree
+           wouldn't help here since each card prints its own labels
+           via ::before — the header row would be redundant noise
+           for screen-reader users too. */
+        display: none;
+    }
+
+    .table-scroll--client .data-table tbody tr
+    {
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius);
+        margin-bottom: 0.75rem;
+        padding: 0.25rem 0.875rem;
+        background: var(--color-surface);
+    }
+
+    .table-scroll--client .data-table tbody tr:hover
+    {
+        background: var(--color-surface-2);
+    }
+
+    .table-scroll--client .data-table td
+    {
+        border: none;
+        padding: 0.5rem 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.75rem;
+        border-bottom: 1px solid var(--color-border);
+    }
+
+    .table-scroll--client .data-table tr td:last-child
+    {
+        border-bottom: none;
+    }
+
+    .table-scroll--client .data-table td::before
+    {
+        content: attr(data-label);
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--color-text-muted);
+        font-weight: 600;
+        flex-shrink: 0;
+    }
+
+    /* Extend the clickable overlay to follow the card radius so
+       the hit-box matches the visible shape. */
+    .table-scroll--client .data-table tbody tr.clickable-row .row-link::before
+    {
+        border-radius: var(--radius);
+    }
 }

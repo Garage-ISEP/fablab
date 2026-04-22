@@ -12,6 +12,12 @@ pub fn user_message(err: &AppError) -> &'static str
         AppError::NotFound(s) if s.starts_with("user") => "Utilisateur introuvable.",
         AppError::NotFound(_) => "Element introuvable.",
 
+        AppError::InvalidInput(s) if s.contains("stock insuffisant") =>
+            "Stock insuffisant : le nouveau poids depasse la quantite restante de la bobine.",
+        AppError::InvalidInput(s) if s.contains("un materiau doit etre defini") =>
+            "Un materiau doit etre selectionne pour faire avancer la commande.",
+        AppError::InvalidInput(s) if s.contains("pas disponible") =>
+            "Le materiau selectionne n'est pas disponible.",
         AppError::InvalidInput(s) if s.contains("can no longer be cancelled") =>
             "Cette commande ne peut plus etre annulee.",
 

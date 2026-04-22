@@ -24,9 +24,6 @@ pub async fn security_headers_middleware(request: Request, next: Next) -> Respon
         "Permissions-Policy",
         "camera=(), microphone=(), geolocation=()".parse().expect("valid header value"),
     );
-    // Only set the default CSP if the handler did not provide one.
-    // File downloads install a stricter `default-src 'none'; sandbox`
-    // header themselves and we must not overwrite it.
     let csp_name: HeaderName = "content-security-policy".parse().expect("valid header name");
     if !headers.contains_key(&csp_name)
     {

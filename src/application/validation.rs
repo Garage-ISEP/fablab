@@ -79,6 +79,26 @@ pub fn validate_color(raw: &str) -> Result<String, AppError>
     Ok(color)
 }
 
+/// Validates a spool weight in grams: must be strictly positive and
+/// finite. Zero is rejected because a zero-weight spool would make the
+/// material unusable; NaN/infinity are rejected as garbage input.
+pub fn validate_spool_weight_grams(raw: f64) -> Result<f64, AppError>
+{
+    if !raw.is_finite()
+    {
+        return Err(AppError::InvalidInput(
+            "spool weight must be a finite number".to_owned(),
+        ));
+    }
+    if raw <= 0.0
+    {
+        return Err(AppError::InvalidInput(
+            "spool weight must be strictly positive".to_owned(),
+        ));
+    }
+    Ok(raw)
+}
+
 #[cfg(test)]
 mod tests
 {
@@ -126,5 +146,36 @@ mod tests
     {
         let long = "x".repeat(60);
         assert!(validate_color(&long).is_err());
+    }
+
+    #[test]
+    fn spool_weight_accepts_positive()
+    {
+        assert_eq!(validate_spool_weight_grams(1000.0).ok(), Some(1000.0));
+        assert_eq!(validate_spool_weight_grams(0.5).ok(), Some(0.5));
+    }
+
+    #[test]
+    fn spool_weight_rejects_zero()
+    {
+        assert!(validate_spool_weight_grams(0.0).is_err());
+    }
+
+    #[test]
+    fn spool_weight_rejects_negative()
+    {
+        assert!(validate_spool_weight_grams(-1.0).is_err());
+    }
+
+    #[test]
+    fn spool_weight_rejects_nan()
+    {
+        assert!(validate_spool_weight_grams(f64::NAN).is_err());
+    }
+
+    #[test]
+    fn spool_weight_rejects_infinity()
+    {
+        assert!(validate_spool_weight_grams(f64::INFINITY).is_err());
     }
 }

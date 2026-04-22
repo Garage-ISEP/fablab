@@ -4,6 +4,10 @@ use super::pool::DbPool;
 
 const MIGRATIONS: &[(&str, &str)] = &[
     ("001_create_db", include_str!("../../../migrations/001_create_db.sql")),
+    (
+        "002_material_spool_weight",
+        include_str!("../../../migrations/002_material_spool_weight.sql"),
+    ),
 ];
 
 pub fn run_migrations(pool: &DbPool) -> Result<(), DomainError>

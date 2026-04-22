@@ -101,6 +101,26 @@ pub struct Order
     pub print_time_minutes: Option<i32>,
 }
 
+impl Order
+{
+    pub fn try_advance_status(&self, target: OrderStatus) -> Result<OrderStatus, DomainError>
+    {
+        if self.material_id.is_none()
+            && matches!(
+                target,
+                OrderStatus::EnTraitement | OrderStatus::Imprime | OrderStatus::Livre
+            )
+        {
+            return Err(DomainError::MaterialRequiredForStatus
+            {
+                target: target.as_str().to_owned(),
+            });
+        }
+
+        self.status.transition_to(target)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NewOrder
 {

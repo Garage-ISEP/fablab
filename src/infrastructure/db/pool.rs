@@ -4,7 +4,6 @@ use rusqlite::Connection;
 
 use crate::domain::errors::DomainError;
 
-/// Thread-safe connection pool around SQLite (WAL mode).
 #[derive(Clone, Debug)]
 pub struct DbPool
 {
@@ -59,5 +58,21 @@ impl DbPool
             .get()
             .map_err(|e| DomainError::Database(format!("pool get error: {e}")))?;
         f(&conn)
+    }
+
+    pub fn with_transaction<F, T>(&self, f: F) -> Result<T, DomainError>
+    where
+        F: FnOnce(&rusqlite::Transaction<'_>) -> Result<T, DomainError>,
+    {
+        let mut conn: PooledConnection<SqliteConnectionManager> = self.pool
+            .get()
+            .map_err(|e| DomainError::Database(format!("pool get error: {e}")))?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| DomainError::Database(format!("begin tx: {e}")))?;
+        let result = f(&tx)?;
+        tx.commit()
+            .map_err(|e| DomainError::Database(format!("commit tx: {e}")))?;
+        Ok(result)
     }
 }

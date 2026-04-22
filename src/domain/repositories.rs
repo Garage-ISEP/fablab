@@ -13,6 +13,18 @@ pub trait OrderRepository: Send + Sync
     fn create(&self, order: NewOrder) -> Result<Order, DomainError>;
     fn update(&self, order: &Order) -> Result<(), DomainError>;
     fn delete(&self, id: i64) -> Result<(), DomainError>;
+
+    fn sum_weight_by_material(
+        &self,
+        material_id: i64,
+        exclude_order_id: Option<i64>,
+    ) -> Result<f64, DomainError>;
+
+    fn update_if_stock_sufficient(
+        &self,
+        order: &Order,
+        spool_weight_grams: f64,
+    ) -> Result<(), DomainError>;
 }
 
 pub trait OrderFileRepository: Send + Sync

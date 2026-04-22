@@ -131,13 +131,14 @@ impl OrderRepository for SqliteOrderRepository
                 .execute(
                     "UPDATE orders SET \
                      status = ?1, requires_payment = ?2, sliced_weight_grams = ?3, \
-                     print_time_minutes = ?4 \
-                     WHERE id = ?5",
+                     print_time_minutes = ?4, material_id = ?5 \
+                     WHERE id = ?6",
                     rusqlite::params![
                         order.status.as_str(),
                         i64::from(order.requires_payment),
                         order.sliced_weight_grams,
                         order.print_time_minutes,
+                        order.material_id,
                         order.id,
                     ],
                 )
@@ -160,6 +161,88 @@ impl OrderRepository for SqliteOrderRepository
             if rows == 0
             {
                 return Err(DomainError::OrderNotFound { id });
+            }
+            Ok(())
+        })
+    }
+
+    fn sum_weight_by_material(
+        &self,
+        material_id: i64,
+        exclude_order_id: Option<i64>,
+    ) -> Result<f64, DomainError>
+    {
+        self.pool.with_conn(|conn|
+        {
+            conn.query_row(
+                "SELECT COALESCE(SUM(sliced_weight_grams), 0.0) \
+                 FROM orders \
+                 WHERE material_id = ?1 \
+                   AND status != 'annule' \
+                   AND (?2 IS NULL OR id != ?2)",
+                rusqlite::params![material_id, exclude_order_id],
+                |row| row.get::<_, f64>(0),
+            )
+            .map_err(|e| DomainError::Database(e.to_string()))
+        })
+    }
+
+    fn update_if_stock_sufficient(
+        &self,
+        order: &Order,
+        spool_weight_grams: f64,
+    ) -> Result<(), DomainError>
+    {
+        let material_id = order.material_id.ok_or_else(||
+            DomainError::Validation(
+                "update_if_stock_sufficient requires a material_id on the order".to_owned(),
+            )
+        )?;
+        let requested = order.sliced_weight_grams.ok_or_else(||
+            DomainError::Validation(
+                "update_if_stock_sufficient requires sliced_weight_grams on the order".to_owned(),
+            )
+        )?;
+
+        self.pool.with_transaction(|tx|
+        {
+            let consumed: f64 = tx.query_row(
+                "SELECT COALESCE(SUM(sliced_weight_grams), 0.0) \
+                 FROM orders \
+                 WHERE material_id = ?1 \
+                   AND status != 'annule' \
+                   AND id != ?2",
+                rusqlite::params![material_id, order.id],
+                |row| row.get::<_, f64>(0),
+            )
+            .map_err(|e| DomainError::Database(e.to_string()))?;
+
+            crate::domain::stock::check_sufficient(
+                material_id,
+                spool_weight_grams,
+                consumed,
+                requested,
+            )?;
+
+            let rows = tx.execute(
+                "UPDATE orders SET \
+                 status = ?1, requires_payment = ?2, sliced_weight_grams = ?3, \
+                 print_time_minutes = ?4, material_id = ?5 \
+                 WHERE id = ?6",
+                rusqlite::params![
+                    order.status.as_str(),
+                    i64::from(order.requires_payment),
+                    order.sliced_weight_grams,
+                    order.print_time_minutes,
+                    order.material_id,
+                    order.id,
+                ],
+            )
+            .map_err(|e| DomainError::Database(e.to_string()))?;
+
+            if rows == 0
+            {
+                return Err(DomainError::OrderNotFound { id: order.id });
             }
             Ok(())
         })
