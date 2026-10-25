@@ -6,6 +6,7 @@ use std::{
 use tokio::sync::RwLock;
 
 use rumqttc::{AsyncClient, MqttOptions, QoS, Transport};
+use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -38,7 +39,7 @@ pub struct FilamentSlot {
     pub slot: String,
     pub filament_type: String,
     pub color: String,
-    /// `None` when the printer cannot estimate it (Bambu reports `-1`).
+    #[serde(default, deserialize_with = "de_opt_u8_from_num_or_str")]
     pub remaining_percent: Option<u8>,
 }
 
@@ -231,4 +232,24 @@ mod tests {
         assert_eq!(slots[1].filament_type, "PETG");
         assert_eq!(slots[1].remaining_percent, None);
     }
+}
+
+fn de_opt_u8_from_num_or_str<'de, D>(d: D) -> Result<Option<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumOrStr {
+        Num(i64),
+        Str(String),
+    }
+
+    let v = Option::<NumOrStr>::deserialize(d)?;
+    Ok(match v {
+        None => None,
+        Some(NumOrStr::Num(n)) if n < 0 => None,
+        Some(NumOrStr::Num(n)) => Some(n as u8),
+        Some(NumOrStr::Str(s)) => s.parse::<i64>().ok().filter(|n| *n >= 0).map(|n| n as u8),
+    })
 }
