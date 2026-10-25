@@ -1,3 +1,4 @@
+use fablab::interface::pages::admin_printers::AdminPrintersPage;
 use leptos::prelude::*;
 use leptos_meta::{MetaTags, Stylesheet, Title, provide_meta_context};
 use leptos_router::components::{Route, Router, Routes};
@@ -13,10 +14,8 @@ use fablab::interface::pages::my_order_detail::MyOrderDetailPage;
 use fablab::interface::pages::my_orders::MyOrdersPage;
 use fablab::interface::pages::order_form::OrderFormPage;
 
-pub fn shell() -> impl IntoView
-{
-    view!
-    {
+pub fn shell() -> impl IntoView {
+    view! {
         <!DOCTYPE html>
         <html lang="fr">
             <head>
@@ -32,12 +31,10 @@ pub fn shell() -> impl IntoView
 }
 
 #[component]
-pub fn App() -> impl IntoView
-{
+pub fn App() -> impl IntoView {
     provide_meta_context();
 
-    view!
-    {
+    view! {
         <Stylesheet id="leptos" href="/style/main.css" />
         <Title text="Fablab | Garage Isep" />
         <Router>
@@ -61,6 +58,7 @@ pub fn App() -> impl IntoView
                     <Route path=path!("/admin/login") view=AdminLoginPage />
                     <Route path=path!("/admin/order/:id") view=AdminOrderEditPage />
                     <Route path=path!("/admin/materials") view=AdminMaterialsPage />
+                    <Route path=path!("/admin/printers") view=AdminPrintersPage />
                 </Routes>
             </main>
             <footer class="footer">

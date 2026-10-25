@@ -1,4 +1,5 @@
 pub mod errors;
+pub mod filament;
 pub mod material;
 pub mod notifications;
 pub mod order;

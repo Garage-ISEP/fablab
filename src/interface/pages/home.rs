@@ -3,8 +3,7 @@ use leptos::prelude::*;
 use crate::interface::components::flash_message::FlashMessage;
 
 #[server]
-pub async fn get_session_info() -> Result<Option<(String, Option<i64>)>, ServerFnError>
-{
+pub async fn get_session_info() -> Result<Option<(String, Option<i64>)>, ServerFnError> {
     use tower_sessions::Session;
     let session: Session = leptos_axum::extract().await?;
 
@@ -13,10 +12,8 @@ pub async fn get_session_info() -> Result<Option<(String, Option<i64>)>, ServerF
         .await
         .map_err(|e| ServerFnError::new(format!("{e}")))?;
 
-    match role
-    {
-        Some(r) =>
-        {
+    match role {
+        Some(r) => {
             let user_id: Option<i64> = session
                 .get("user_id")
                 .await
@@ -28,12 +25,10 @@ pub async fn get_session_info() -> Result<Option<(String, Option<i64>)>, ServerF
 }
 
 #[component]
-pub fn HomePage() -> impl IntoView
-{
+pub fn HomePage() -> impl IntoView {
     let session_info = Resource::new(|| (), |_| get_session_info());
 
-    view!
-    {
+    view! {
         <div class="hero">
             <div class="hero-content">
                 <h1>"Impression 3D par Garage Isep"</h1>
@@ -58,6 +53,7 @@ pub fn HomePage() -> impl IntoView
                                         <div class="hero-actions">
                                             <a href="/admin" class="btn btn-primary btn-lg">"Tableau de bord"</a>
                                             <a href="/admin/materials" class="btn btn-lg">"Materiaux"</a>
+                                            <a href="/admin/printers" class="btn btn-lg">"Imprimantes"</a>
                                         </div>
                                     }.into_any()
                                 }

@@ -1,21 +1,18 @@
 use leptos::prelude::*;
-use leptos::server_fn::ServerFn;
 
 use crate::application::dtos::order_output::MaterialView;
 
-use crate::interface::components::csrf_field::CsrfField;
+use crate::interface::components::bambu_banner::BambuStatusBanner;
 use crate::interface::components::flash_message::FlashMessage;
 use crate::interface::session_helpers::extract_admin_caller;
 
 #[server]
-pub async fn fetch_all_materials_with_stock() -> Result<Vec<MaterialView>, ServerFnError>
-{
+pub async fn fetch_all_materials_with_stock() -> Result<Vec<MaterialView>, ServerFnError> {
     let _caller = extract_admin_caller().await?;
 
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
     let list_materials = state.list_materials.clone();
-    tokio::task::spawn_blocking(move ||
-    {
+    tokio::task::spawn_blocking(move || {
         list_materials
             .execute_with_stock(false)
             .map_err(|e| ServerFnError::new(format!("{e}")))
@@ -24,136 +21,25 @@ pub async fn fetch_all_materials_with_stock() -> Result<Vec<MaterialView>, Serve
     .map_err(|e| ServerFnError::new(format!("{e}")))?
 }
 
-#[server]
-pub async fn upsert_material_action(
-    id: String,
-    name: String,
-    color: String,
-    spool_weight_grams: String,
-    available: Option<String>,
-) -> Result<(), ServerFnError>
-{
-    use tower_sessions::Session;
-    use crate::domain::material::Material;
-    use crate::interface::flash::{FlashLevel, set_flash};
-    use crate::application::validation;
-
-    let _caller = extract_admin_caller().await?;
-    let session: Session = leptos_axum::extract().await?;
-
-    let parsed_id = id.parse::<i64>()
-        .map_err(|_| ServerFnError::new("id invalide"))?;
-
-    let validated_name = match validation::validate_material_name(&name)
-    {
-        Ok(n) => n,
-        Err(_) =>
-        {
-            let _ = set_flash(&session, FlashLevel::Error, "Le nom du materiau est requis.").await;
-            leptos_axum::redirect("/admin/materials");
-            return Ok(());
-        }
-    };
-
-    let validated_color = match validation::validate_color(&color)
-    {
-        Ok(c) => c,
-        Err(_) =>
-        {
-            let _ = set_flash(&session, FlashLevel::Error, "La couleur est requise.").await;
-            leptos_axum::redirect("/admin/materials");
-            return Ok(());
-        }
-    };
-
-    let parsed_weight = match spool_weight_grams.trim().parse::<f64>()
-    {
-        Ok(w) => w,
-        Err(_) =>
-        {
-            let _ = set_flash(
-                &session,
-                FlashLevel::Error,
-                "Le poids de la bobine doit etre un nombre.",
-            ).await;
-            leptos_axum::redirect("/admin/materials");
-            return Ok(());
-        }
-    };
-
-    let validated_weight = match validation::validate_spool_weight_grams(parsed_weight)
-    {
-        Ok(w) => w,
-        Err(_) =>
-        {
-            let _ = set_flash(
-                &session,
-                FlashLevel::Error,
-                "Le poids de la bobine doit etre strictement positif.",
-            ).await;
-            leptos_axum::redirect("/admin/materials");
-            return Ok(());
-        }
-    };
-
-    let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
-    let manage_material = state.manage_material.clone();
-    let is_available = available.is_some();
-
-    let db_result = tokio::task::spawn_blocking(move ||
-    {
-        let final_id = if parsed_id <= 0
-        {
-            manage_material.next_id()?
-        }
-        else
-        {
-            parsed_id
-        };
-
-        let material = Material
-        {
-            id: final_id,
-            name: validated_name,
-            color: validated_color,
-            available: is_available,
-            spool_weight_grams: validated_weight,
-        };
-
-        manage_material.execute(material)
-    })
-    .await
-    .map_err(|e| ServerFnError::new(format!("{e}")))?;
-
-    match db_result
-    {
-        Ok(_) =>
-        {
-            let _ = set_flash(&session, FlashLevel::Success, "Materiau enregistre.").await;
-        }
-        Err(_) =>
-        {
-            let _ = set_flash(&session, FlashLevel::Error, "Erreur lors de l'enregistrement.").await;
-        }
-    }
-
-    leptos_axum::redirect("/admin/materials");
-    Ok(())
-}
-
 #[component]
-pub fn AdminMaterialsPage() -> impl IntoView
-{
+pub fn AdminMaterialsPage() -> impl IntoView {
     let materials = Resource::new(|| (), |_| fetch_all_materials_with_stock());
 
-    view!
-    {
+    view! {
         <div class="page-card">
             <div class="page-header">
                 <h1>"Materiaux"</h1>
+                <a href="/admin/printers" class="btn">"Imprimantes"</a>
             </div>
 
             <FlashMessage />
+            <BambuStatusBanner />
+
+            <p class="hint">
+                "Les materiaux sont crees automatiquement a partir des bobines chargees dans les AMS. "
+                "Le disponible correspond au filament mesure par les imprimantes, moins le poids des commandes "
+                "en attente ou en traitement."
+            </p>
 
             <Suspense fallback=|| view! { <p class="loading">"Chargement..."</p> }>
                 {move ||
@@ -166,9 +52,9 @@ pub fn AdminMaterialsPage() -> impl IntoView
                             {
                                 view!
                                 {
-                                    <div class="empty-state">
-                                        <p>"Aucun materiau enregistre."</p>
-                                    </div>
+                                    <section class="empty-state">
+                                        <p>"Aucun materiau : aucune bobine n'a encore ete detectee dans les AMS."</p>
+                                    </section>
                                 }.into_any()
                             }
                             Ok(mats) =>
@@ -180,10 +66,10 @@ pub fn AdminMaterialsPage() -> impl IntoView
                                             <tr>
                                                 <th>"Nom"</th>
                                                 <th>"Couleur"</th>
-                                                <th>"Poids bobine"</th>
-                                                <th>"Stock restant"</th>
+                                                <th>"Emplacement"</th>
+                                                <th>"Mesure AMS"</th>
+                                                <th>"Reserve"</th>
                                                 <th>"Disponible"</th>
-                                                <th>"Actions"</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -206,121 +92,46 @@ pub fn AdminMaterialsPage() -> impl IntoView
                     })
                 }}
             </Suspense>
-
-            <section class="add-material-section">
-                <h2>"Ajouter un materiau"</h2>
-                <form method="post" action=UpsertMaterialAction::url() class="material-form">
-                    <CsrfField />
-                    <input type="hidden" name="id" value="-1" />
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="new-name">"Nom"</label>
-                            <input id="new-name" name="name" type="text" required placeholder="PLA, ABS, PETG..." />
-                        </div>
-                        <div class="form-group">
-                            <label for="new-color">"Couleur"</label>
-                            <input id="new-color" name="color" type="text" required placeholder="Noir mat, Rouge translucide..." />
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="new-spool-weight">"Poids bobine (g)"</label>
-                            <input
-                                id="new-spool-weight"
-                                name="spool_weight_grams"
-                                type="number"
-                                step="0.1"
-                                min="0.1"
-                                value="1000"
-                                required
-                            />
-                        </div>
-                    </div>
-                    <div class="form-group checkbox-group">
-                        <label>
-                            <input type="checkbox" name="available" checked />
-                            "Disponible"
-                        </label>
-                    </div>
-                    <button type="submit" class="btn btn-primary">"Ajouter"</button>
-                </form>
-            </section>
         </div>
     }
 }
 
-fn render_material_row(m: MaterialView) -> impl IntoView
-{
-    let mid = m.id.to_string();
-    let delete_action = format!("/admin/materials/{}/delete", m.id);
-    let name = m.name.clone();
-    let color = m.color.clone();
-    let spool = m.spool_weight_grams;
-    let remaining = m.remaining_weight_grams;
-    let spool_str = format!("{spool:.1} g");
-    let remaining_str = format!("{remaining:.1} g");
-    let toggle_checked = !m.available;
-    let spool_hidden = format!("{spool}");
+fn render_material_row(m: MaterialView) -> impl IntoView {
+    let swatch = m
+        .color_hex
+        .filter(|hex| !hex.is_empty())
+        .map(|hex| format!("background: #{hex}"));
+    let location = if !m.available {
+        "Non chargee".to_owned()
+    } else if m.locations.is_empty() {
+        "-".to_owned()
+    } else {
+        m.locations.join(", ")
+    };
+    let grams =
+        |value: Option<f64>| value.map_or_else(|| "Inconnu".to_owned(), |g| format!("{g:.0} g"));
+    let measured_str = grams(m.measured_remaining_grams);
+    let reserved_str = format!("{:.0} g", m.reserved_grams);
+    let available_str = grams(m.available_grams);
 
-    let stock_class = if remaining < 0.0
-    {
-        "stock-overdraft"
-    }
-    else if remaining < spool * 0.10
-    {
-        "stock-low"
-    }
-    else
-    {
-        "stock-ok"
+    let stock_class = match (m.available_grams, m.measured_remaining_grams) {
+        (Some(available), _) if available < 0.0 => "stock-overdraft",
+        (Some(available), Some(measured)) if available < measured * 0.10 => "stock-low",
+        (Some(_), _) => "stock-ok",
+        (None, _) => "stock-unknown",
     };
 
-    view!
-    {
+    view! {
         <tr>
-            <td class="td-name">{name.clone()}</td>
-            <td>{color.clone()}</td>
-            <td>{spool_str}</td>
-            <td class=stock_class>{remaining_str}</td>
+            <td class="td-name">{m.name}</td>
             <td>
-                {if m.available
-                {
-                    view! { <span class="badge badge-delivered">"Oui"</span> }.into_any()
-                }
-                else
-                {
-                    view! { <span class="badge badge-cancelled">"Non"</span> }.into_any()
-                }}
+                {swatch.map(|style| view! { <span class="color-swatch" style=style></span> })}
+                {m.color}
             </td>
-            <td>
-                <form method="post" action=UpsertMaterialAction::url() style="display:inline">
-                    <CsrfField />
-                    <input type="hidden" name="id" value=mid />
-                    <input type="hidden" name="name" value=name />
-                    <input type="hidden" name="color" value=color />
-                    <input type="hidden" name="spool_weight_grams" value=spool_hidden />
-                    {if toggle_checked
-                    {
-                        Some(view! { <input type="hidden" name="available" value="on" /> })
-                    }
-                    else
-                    {
-                        None
-                    }}
-                    <button type="submit" class="btn btn-small">
-                        {if m.available { "Desactiver" } else { "Activer" }}
-                    </button>
-                </form>
-                <form
-                    method="post"
-                    action=delete_action
-                    style="display:inline; margin-left: 0.5rem"
-                    onsubmit="return confirm('Supprimer ce materiau ? Cette action est irreversible.')"
-                >
-                    <CsrfField />
-                    <button type="submit" class="btn btn-small btn-danger">"Supprimer"</button>
-                </form>
-            </td>
+            <td>{location}</td>
+            <td>{measured_str}</td>
+            <td>{reserved_str}</td>
+            <td class=stock_class>{available_str}</td>
         </tr>
     }
 }

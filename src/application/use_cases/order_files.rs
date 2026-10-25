@@ -4,10 +4,8 @@ use tokio::io::AsyncRead;
 
 use crate::application::errors::AppError;
 use crate::domain::order_file::{NewOrderFile, OrderFile};
-use crate::domain::repositories::
-{
-    FileStorage, MaterialRepository, OrderFileRepository, OrderRepository,
-    UserRepository,
+use crate::domain::repositories::{
+    FileStorage, MaterialRepository, OrderFileRepository, OrderRepository, UserRepository,
 };
 use crate::infrastructure::storage::local_fs::LocalFileStorage;
 use crate::infrastructure::storage::upload::validate_filename;
@@ -27,9 +25,12 @@ where
     O: OrderRepository,
     F: OrderFileRepository,
 {
-    pub fn new(orders: Arc<O>, files: Arc<F>, storage: Arc<LocalFileStorage>) -> Self
-    {
-        Self { orders, files, storage }
+    pub fn new(orders: Arc<O>, files: Arc<F>, storage: Arc<LocalFileStorage>) -> Self {
+        Self {
+            orders,
+            files,
+            storage,
+        }
     }
 
     /// Authorize (student owner or any order if caller is admin),
@@ -46,10 +47,11 @@ where
     where
         R: AsyncRead + Unpin + Send,
     {
-        let order = self.orders.find_by_id(order_id)?
+        let order = self
+            .orders
+            .find_by_id(order_id)?
             .ok_or_else(|| AppError::NotFound(format!("order {order_id}")))?;
-        if order.user_id != owner_user_id
-        {
+        if order.user_id != owner_user_id {
             return Err(AppError::NotAuthorized);
         }
 
@@ -57,9 +59,10 @@ where
 
         let cfg = self.storage.config();
         let existing = self.files.count_by_order(order_id)?;
-        if existing >= cfg.max_files_per_order
-        {
-            return Err(AppError::InvalidInput("too many files for this order".to_owned()));
+        if existing >= cfg.max_files_per_order {
+            return Err(AppError::InvalidInput(
+                "too many files for this order".to_owned(),
+            ));
         }
 
         // Pessimistic pre-check: if the storage is already full enough
@@ -68,8 +71,7 @@ where
         // upload check below confirms the exact result.
         let stats = self.files.storage_stats()?;
         let used = u64::try_from(stats.total_bytes).unwrap_or(u64::MAX);
-        if used.saturating_add(cfg.max_upload_bytes) > cfg.max_total_storage_bytes
-        {
+        if used.saturating_add(cfg.max_upload_bytes) > cfg.max_total_storage_bytes {
             return Err(AppError::Database("storage full".to_owned()));
         }
 
@@ -78,15 +80,13 @@ where
         // Post-check using the real written size. Still racy under
         // concurrent uploads; accepted for the fablab usage profile.
         let stored_size = stored.size_bytes;
-        if used.saturating_add(stored_size) > cfg.max_total_storage_bytes
-        {
+        if used.saturating_add(stored_size) > cfg.max_total_storage_bytes {
             let _ = self.storage.delete(&stored.stored_filename).await;
             return Err(AppError::Database("storage full".to_owned()));
         }
 
         let size_i64 = i64::try_from(stored_size).unwrap_or(i64::MAX);
-        let row = self.files.create(NewOrderFile
-        {
+        let row = self.files.create(NewOrderFile {
             order_id,
             original_filename: clean_name,
             stored_filename: stored.stored_filename.clone(),
@@ -94,11 +94,9 @@ where
             mime_type: kind.mime_type().to_owned(),
         });
 
-        match row
-        {
+        match row {
             Ok(f) => Ok(f),
-            Err(e) =>
-            {
+            Err(e) => {
                 let _ = self.storage.delete(&stored.stored_filename).await;
                 Err(e.into())
             }
@@ -123,8 +121,7 @@ where
     O: OrderRepository,
     F: OrderFileRepository,
 {
-    pub fn new(orders: Arc<O>, files: Arc<F>) -> Self
-    {
+    pub fn new(orders: Arc<O>, files: Arc<F>) -> Self {
         Self { orders, files }
     }
 
@@ -133,26 +130,21 @@ where
         file_id: i64,
         is_admin: bool,
         caller_user_id: Option<i64>,
-    ) -> Result<OrderFile, AppError>
-    {
-        let file = match self.files.find_by_id(file_id)?
-        {
+    ) -> Result<OrderFile, AppError> {
+        let file = match self.files.find_by_id(file_id)? {
             Some(f) => f,
             None => return Err(AppError::NotFound("file".to_owned())),
         };
 
-        if is_admin
-        {
+        if is_admin {
             return Ok(file);
         }
 
-        let order = match self.orders.find_by_id(file.order_id)?
-        {
+        let order = match self.orders.find_by_id(file.order_id)? {
             Some(o) => o,
             None => return Err(AppError::NotFound("file".to_owned())),
         };
-        match caller_user_id
-        {
+        match caller_user_id {
             Some(uid) if uid == order.user_id => Ok(file),
             _ => Err(AppError::NotFound("file".to_owned())),
         }
@@ -174,26 +166,24 @@ impl<F> DeleteOrderFileUseCase<F>
 where
     F: OrderFileRepository,
 {
-    pub fn new(files: Arc<F>, storage: Arc<dyn FileStorage>) -> Self
-    {
+    pub fn new(files: Arc<F>, storage: Arc<dyn FileStorage>) -> Self {
         Self { files, storage }
     }
 
-    pub async fn execute(&self, file_id: i64, is_admin: bool) -> Result<(), AppError>
-    {
-        if !is_admin
-        {
+    pub async fn execute(&self, file_id: i64, is_admin: bool) -> Result<(), AppError> {
+        if !is_admin {
             return Err(AppError::NotAuthorized);
         }
 
-        let file = self.files.find_by_id(file_id)?
+        let file = self
+            .files
+            .find_by_id(file_id)?
             .ok_or_else(|| AppError::NotFound(format!("file {file_id}")))?;
         let stored = file.stored_filename.clone();
 
         self.files.delete(file_id)?;
 
-        if let Err(e) = self.storage.delete(&stored).await
-        {
+        if let Err(e) = self.storage.delete(&stored).await {
             eprintln!("file deleted in db but not on disk: {e}");
         }
         Ok(())
@@ -218,17 +208,18 @@ where
     O: OrderRepository,
     F: OrderFileRepository,
 {
-    pub fn new(orders: Arc<O>, files: Arc<F>, storage: Arc<dyn FileStorage>) -> Self
-    {
-        Self { orders, files, storage }
+    pub fn new(orders: Arc<O>, files: Arc<F>, storage: Arc<dyn FileStorage>) -> Self {
+        Self {
+            orders,
+            files,
+            storage,
+        }
     }
 
-    pub async fn execute(&self, order_id: i64) -> Result<(), AppError>
-    {
+    pub async fn execute(&self, order_id: i64) -> Result<(), AppError> {
         let files = self.files.find_by_order(order_id).unwrap_or_default();
         self.orders.delete(order_id)?;
-        for f in &files
-        {
+        for f in &files {
             let _ = self.storage.delete(&f.stored_filename).await;
         }
         Ok(())
@@ -251,16 +242,13 @@ impl<F> PurgeOrderFilesUseCase<F>
 where
     F: OrderFileRepository,
 {
-    pub fn new(files: Arc<F>, storage: Arc<dyn FileStorage>) -> Self
-    {
+    pub fn new(files: Arc<F>, storage: Arc<dyn FileStorage>) -> Self {
         Self { files, storage }
     }
 
-    pub async fn execute(&self, order_id: i64) -> Result<(), AppError>
-    {
+    pub async fn execute(&self, order_id: i64) -> Result<(), AppError> {
         let files = self.files.find_by_order(order_id)?;
-        for f in &files
-        {
+        for f in &files {
             // Best effort: even if the disk delete fails, remove the
             // DB row so the file is no longer visible. Orphaned bytes
             // can be reclaimed manually.
@@ -294,10 +282,8 @@ where
     M: MaterialRepository,
     F: OrderFileRepository,
 {
-    pub fn new(orders: Arc<O>, purge: Arc<PurgeOrderFilesUseCase<F>>) -> Self
-    {
-        Self
-        {
+    pub fn new(orders: Arc<O>, purge: Arc<PurgeOrderFilesUseCase<F>>) -> Self {
+        Self {
             orders,
             purge,
             _users: std::marker::PhantomData,
@@ -305,22 +291,22 @@ where
         }
     }
 
-    pub async fn execute(&self, order_id: i64, caller_user_id: i64) -> Result<(), AppError>
-    {
+    pub async fn execute(&self, order_id: i64, caller_user_id: i64) -> Result<(), AppError> {
         use crate::domain::order::OrderStatus;
 
-        let mut order = self.orders.find_by_id(order_id)?
+        let mut order = self
+            .orders
+            .find_by_id(order_id)?
             .ok_or_else(|| AppError::NotFound(format!("order {order_id}")))?;
 
-        if order.user_id != caller_user_id
-        {
+        if order.user_id != caller_user_id {
             return Err(AppError::NotAuthorized);
         }
 
-        if order.status != OrderStatus::ATraiter
-        {
+        if order.status != OrderStatus::ATraiter {
             return Err(AppError::InvalidInput(
-                "order can no longer be cancelled".to_owned()));
+                "order can no longer be cancelled".to_owned(),
+            ));
         }
 
         order.status = order.status.transition_to(OrderStatus::Annule)?;
@@ -345,15 +331,12 @@ where
     O: OrderRepository,
     F: OrderFileRepository,
 {
-    pub fn new(cancel: Arc<CancelOrderUseCase<O, F>>) -> Self
-    {
+    pub fn new(cancel: Arc<CancelOrderUseCase<O, F>>) -> Self {
         Self { cancel }
     }
 
-    pub async fn execute(&self, order_id: i64, is_admin: bool) -> Result<(), AppError>
-    {
-        if !is_admin
-        {
+    pub async fn execute(&self, order_id: i64, is_admin: bool) -> Result<(), AppError> {
+        if !is_admin {
             return Err(AppError::NotAuthorized);
         }
         self.cancel.execute(order_id).await

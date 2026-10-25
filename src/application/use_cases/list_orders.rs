@@ -25,15 +25,17 @@ where
     U: UserRepository,
     M: MaterialRepository,
 {
-    pub fn new(orders: Arc<O>, users: Arc<U>, materials: Arc<M>) -> Self
-    {
-        Self { orders, users, materials }
+    pub fn new(orders: Arc<O>, users: Arc<U>, materials: Arc<M>) -> Self {
+        Self {
+            orders,
+            users,
+            materials,
+        }
     }
 
     /// Lists orders without any filtering or sorting.
     /// Used by student "my orders" page.
-    pub fn execute(&self, caller: &Caller) -> Result<Vec<OrderView>, AppError>
-    {
+    pub fn execute(&self, caller: &Caller) -> Result<Vec<OrderView>, AppError> {
         self.execute_filtered(caller, &OrderFilter::default(), OrderSort::default_recent())
     }
 
@@ -44,10 +46,8 @@ where
         caller: &Caller,
         filter: &OrderFilter,
         sort: OrderSort,
-    ) -> Result<Vec<OrderView>, AppError>
-    {
-        let orders = match caller
-        {
+    ) -> Result<Vec<OrderView>, AppError> {
+        let orders = match caller {
             Caller::Admin => self.orders.find_all()?,
             Caller::Student { user_id } => self.orders.find_by_user(*user_id)?,
         };
@@ -66,21 +66,16 @@ where
             .collect();
 
         let users = self.users.find_by_ids(&user_ids)?;
-        let user_map: HashMap<i64, String> = users
-            .into_iter()
-            .map(|u| (u.id, u.display_name))
-            .collect();
+        let user_map: HashMap<i64, String> =
+            users.into_iter().map(|u| (u.id, u.display_name)).collect();
 
         let materials = self.materials.find_by_ids(&material_ids)?;
-        let material_map: HashMap<i64, String> = materials
-            .into_iter()
-            .map(|m| (m.id, m.label()))
-            .collect();
+        let material_map: HashMap<i64, String> =
+            materials.into_iter().map(|m| (m.id, m.label())).collect();
 
         let mut views: Vec<OrderView> = orders
             .iter()
-            .map(|order|
-            {
+            .map(|order| {
                 let display_name = user_map
                     .get(&order.user_id)
                     .cloned()

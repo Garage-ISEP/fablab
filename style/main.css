@@ -207,6 +207,8 @@ a:hover { color: var(--color-primary-hover); }
 
 .page-header h1 { margin: 0; }
 
+.printer-status + .printer-status { margin-top: 2rem; }
+
 /* ============================================================
    Navbar
    ============================================================ */
@@ -583,6 +585,35 @@ a:hover { color: var(--color-primary-hover); }
     font-weight: 700;
 }
 
+.stock-unknown
+{
+    color: var(--color-text-muted);
+    font-style: italic;
+}
+
+/* ------------------------------------------------------------
+   Printers & AMS
+   ------------------------------------------------------------ */
+.color-swatch
+{
+    display: inline-block;
+    width: 0.9rem;
+    height: 0.9rem;
+    margin-right: 0.4rem;
+    vertical-align: -0.1rem;
+    border-radius: 50%;
+    border: 1px solid var(--color-border-strong);
+}
+
+.printer-online  { color: var(--color-success); font-weight: 600; }
+.printer-offline { color: var(--color-text-muted); font-weight: 600; }
+
+.hint
+{
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+}
+
 .table-scroll
 {
     width: 100%;
@@ -726,6 +757,15 @@ a:hover { color: var(--color-primary-hover); }
     color: var(--color-danger);
     border-color: var(--color-danger);
 }
+
+.alert-warning
+{
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
+    border-color: var(--color-warning);
+}
+
+.alert .btn { margin-top: 0.25rem; }
 
 .alert p { color: inherit; margin-bottom: 0.5rem; }
 .alert p:last-child { margin-bottom: 0; }

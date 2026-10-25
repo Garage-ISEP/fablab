@@ -3,8 +3,7 @@ use serde::{Deserialize, Serialize};
 /// A file attached to an order, stored on the local filesystem and
 /// referenced by its stored filename (a UUID + canonical extension).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct OrderFile
-{
+pub struct OrderFile {
     pub id: i64,
     pub order_id: i64,
     pub original_filename: String,
@@ -17,8 +16,7 @@ pub struct OrderFile
 /// Payload used to persist a new order file after bytes have been
 /// written to disk.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct NewOrderFile
-{
+pub struct NewOrderFile {
     pub order_id: i64,
     pub original_filename: String,
     pub stored_filename: String,
@@ -28,8 +26,7 @@ pub struct NewOrderFile
 
 /// Aggregate storage statistics for the admin dashboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct StorageStats
-{
+pub struct StorageStats {
     pub total_files: i64,
     pub total_bytes: i64,
 }

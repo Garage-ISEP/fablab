@@ -1,11 +1,10 @@
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 
 use crate::domain::errors::DomainError;
 use crate::domain::user::CasUser;
 
-pub fn parse_cas_response(xml: &str) -> Result<CasUser, DomainError>
-{
+pub fn parse_cas_response(xml: &str) -> Result<CasUser, DomainError> {
     let mut reader = Reader::from_str(xml);
 
     let mut cas_login: Option<String> = None;
@@ -17,35 +16,34 @@ pub fn parse_cas_response(xml: &str) -> Result<CasUser, DomainError>
     let mut in_auth_success = false;
     let mut found_failure = false;
 
-    loop
-    {
-        match reader.read_event()
-        {
-            Ok(Event::Start(ref e)) =>
-            {
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) => {
                 let tag = strip_ns(&String::from_utf8_lossy(e.name().as_ref()));
 
-                match tag.as_str()
-                {
-                    "authenticationSuccess" => { in_auth_success = true; }
-                    "authenticationFailure" => { found_failure = true; }
+                match tag.as_str() {
+                    "authenticationSuccess" => {
+                        in_auth_success = true;
+                    }
+                    "authenticationFailure" => {
+                        found_failure = true;
+                    }
                     _ => {}
                 }
 
-                if in_auth_success
-                {
+                if in_auth_success {
                     current_tag = tag;
                 }
             }
-            Ok(Event::Text(ref e)) if in_auth_success =>
-            {
+            Ok(Event::Text(ref e)) if in_auth_success => {
                 let text = e
                     .decode()
-                    .map_err(|err| DomainError::Validation(format!("CAS XML text decode error: {err}")))?
+                    .map_err(|err| {
+                        DomainError::Validation(format!("CAS XML text decode error: {err}"))
+                    })?
                     .into_owned();
 
-                match current_tag.as_str()
-                {
+                match current_tag.as_str() {
                     "user" => cas_login = Some(text),
                     "displayName" => display_name = Some(text),
                     "mail" => email = Some(text),
@@ -53,18 +51,18 @@ pub fn parse_cas_response(xml: &str) -> Result<CasUser, DomainError>
                     _ => {}
                 }
             }
-            Ok(Event::End(_)) => { current_tag.clear(); }
+            Ok(Event::End(_)) => {
+                current_tag.clear();
+            }
             Ok(Event::Eof) => break,
-            Err(e) =>
-            {
+            Err(e) => {
                 return Err(DomainError::Validation(format!("CAS XML parse error: {e}")));
             }
             _ => {}
         }
     }
 
-    if found_failure
-    {
+    if found_failure {
         return Err(DomainError::Validation(
             "CAS authentication failed: invalid ticket".to_owned(),
         ));
@@ -74,11 +72,10 @@ pub fn parse_cas_response(xml: &str) -> Result<CasUser, DomainError>
         .ok_or_else(|| DomainError::Validation("CAS response missing user field".to_owned()))?;
     let display_name = display_name
         .ok_or_else(|| DomainError::Validation("CAS response missing displayName".to_owned()))?;
-    let email = email
-        .ok_or_else(|| DomainError::Validation("CAS response missing mail".to_owned()))?;
+    let email =
+        email.ok_or_else(|| DomainError::Validation("CAS response missing mail".to_owned()))?;
 
-    Ok(CasUser
-    {
+    Ok(CasUser {
         cas_login: sanitize_cas_field(&cas_login),
         display_name: sanitize_cas_field(&display_name),
         email: sanitize_cas_field(&email),
@@ -88,8 +85,7 @@ pub fn parse_cas_response(xml: &str) -> Result<CasUser, DomainError>
 
 /// Strip angle brackets and control characters from CAS-provided values
 /// to prevent stored XSS if they are ever rendered in HTML contexts.
-fn sanitize_cas_field(raw: &str) -> String
-{
+fn sanitize_cas_field(raw: &str) -> String {
     raw.chars()
         .filter(|c| !c.is_control() && *c != '<' && *c != '>')
         .collect::<String>()
@@ -97,10 +93,8 @@ fn sanitize_cas_field(raw: &str) -> String
         .to_owned()
 }
 
-fn strip_ns(tag: &str) -> String
-{
-    match tag.find(':')
-    {
+fn strip_ns(tag: &str) -> String {
+    match tag.find(':') {
         Some(pos) => tag[pos + 1..].to_owned(),
         None => tag.to_owned(),
     }
@@ -108,13 +102,11 @@ fn strip_ns(tag: &str) -> String
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
-mod tests
-{
+mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_success()
-    {
+    fn test_parse_success() {
         let xml = r#"<cas:serviceResponse xmlns:cas="http://www.yale.edu/tp/cas">
             <cas:authenticationSuccess>
                 <cas:user>situ62394</cas:user>
@@ -134,8 +126,7 @@ mod tests
     }
 
     #[test]
-    fn test_parse_failure()
-    {
+    fn test_parse_failure() {
         let xml = r#"<cas:serviceResponse xmlns:cas="http://www.yale.edu/tp/cas">
             <cas:authenticationFailure code="INVALID_TICKET">Invalid</cas:authenticationFailure>
         </cas:serviceResponse>"#;
@@ -144,8 +135,7 @@ mod tests
     }
 
     #[test]
-    fn test_parse_malformed()
-    {
+    fn test_parse_malformed() {
         assert!(parse_cas_response("<not valid xml at all").is_err());
     }
 }

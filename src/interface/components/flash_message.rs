@@ -1,10 +1,9 @@
 use leptos::prelude::*;
 
 #[server]
-pub async fn get_flash() -> Result<Option<(String, String)>, ServerFnError>
-{
-    use tower_sessions::Session;
+pub async fn get_flash() -> Result<Option<(String, String)>, ServerFnError> {
     use crate::interface::flash::take_flash;
+    use tower_sessions::Session;
 
     let session: Session = leptos_axum::extract().await?;
     take_flash(&session)
@@ -13,12 +12,10 @@ pub async fn get_flash() -> Result<Option<(String, String)>, ServerFnError>
 }
 
 #[component]
-pub fn FlashMessage() -> impl IntoView
-{
+pub fn FlashMessage() -> impl IntoView {
     let flash = Resource::new(|| (), |_| get_flash());
 
-    view!
-    {
+    view! {
         <Suspense fallback=|| ()>
             {move ||
             {
