@@ -97,7 +97,10 @@ fn render_printer(printer: PrinterView) -> impl IntoView {
                                             <td>{filament.slot}</td>
                                             <td>{filament.filament_type}</td>
                                             <td>{filament.color}</td>
-                                            <td>{format!("{} %", filament.remaining_percent)}</td>
+                                            <td>{match filament.remaining_percent {
+                                                Some(percent) => format!("{percent} %"),
+                                                None => "Non disponible".to_string(),
+                                            }}</td>
                                         </tr>
                                     }).collect::<Vec<_>>()}
                                 </tbody>

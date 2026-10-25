@@ -38,7 +38,8 @@ pub struct FilamentSlot {
     pub slot: String,
     pub filament_type: String,
     pub color: String,
-    pub remaining_percent: u8,
+    /// `None` when the printer cannot estimate it (Bambu reports `-1`).
+    pub remaining_percent: Option<u8>,
 }
 
 pub type SharedPrinterStatuses = Arc<RwLock<HashMap<String, PrinterStatus>>>;
@@ -77,7 +78,24 @@ struct TrayData {
     tray_type: Option<String>,
     tray_sub_brands: Option<String>,
     tray_color: Option<String>,
-    remain: Option<u8>,
+    // Signed: Bambu sends -1 when the remaining amount is unknown, which
+    // would make the whole report fail to deserialize as u8.
+    remain: Option<i16>,
+}
+
+/// Empty AMS slots only carry their id, so they are skipped.
+fn tray_to_slot(tray: TrayData) -> Option<FilamentSlot> {
+    let filament_type = tray
+        .tray_type
+        .or(tray.tray_sub_brands)
+        .filter(|filament_type| !filament_type.is_empty())?;
+
+    Some(FilamentSlot {
+        slot: tray.id?,
+        filament_type,
+        color: tray.tray_color.unwrap_or_default(),
+        remaining_percent: tray.remain.and_then(|remain| u8::try_from(remain).ok()),
+    })
 }
 
 pub async fn start_cloud_mqtt_listener(
@@ -106,6 +124,20 @@ pub async fn start_cloud_mqtt_listener(
 
     let topic = format!("device/{}/report", device_serial);
     client.subscribe(topic, QoS::AtMostOnce).await?;
+
+    // Without this request the printer only sends deltas, and the AMS
+    // block is only included when it changes.
+    let pushall = serde_json::json!({
+        "pushing": { "sequence_id": "0", "command": "pushall" }
+    });
+    client
+        .publish(
+            format!("device/{}/request", device_serial),
+            QoS::AtMostOnce,
+            false,
+            pushall.to_string(),
+        )
+        .await?;
 
     loop {
         match eventloop.poll().await {
@@ -141,23 +173,13 @@ pub async fn start_cloud_mqtt_listener(
                         if let Some(v) = p.subtask_name {
                             s.subtask_name = v;
                         }
-                        if let Some(ams) = p.ams {
-                            s.filament_slots = ams
-                                .ams
-                                .unwrap_or_default()
+                        // Delta reports often carry only `{"ams": {"version": N}}`;
+                        // keep the known slots unless the unit list is present.
+                        if let Some(units) = p.ams.and_then(|ams| ams.ams) {
+                            s.filament_slots = units
                                 .into_iter()
                                 .flat_map(|unit| unit.tray.unwrap_or_default())
-                                .filter_map(|tray| {
-                                    Some(FilamentSlot {
-                                        slot: tray.id?,
-                                        filament_type: tray
-                                            .tray_type
-                                            .or(tray.tray_sub_brands)
-                                            .unwrap_or_default(),
-                                        color: tray.tray_color.unwrap_or_default(),
-                                        remaining_percent: tray.remain?,
-                                    })
-                                })
+                                .filter_map(tray_to_slot)
                                 .collect();
                         }
                     }
@@ -172,5 +194,41 @@ pub async fn start_cloud_mqtt_listener(
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn slots_from(payload: &str) -> Vec<FilamentSlot> {
+        let report: CloudReport = serde_json::from_str(payload).expect("report should parse");
+        report
+            .print
+            .and_then(|print| print.ams)
+            .and_then(|ams| ams.ams)
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|unit| unit.tray.unwrap_or_default())
+            .filter_map(tray_to_slot)
+            .collect()
+    }
+
+    #[test]
+    fn report_with_unknown_remain_still_parses() {
+        let slots = slots_from(
+            r#"{"print": {"gcode_state": "IDLE", "ams": {"ams": [{"id": "0", "tray": [
+                {"id": "0", "tray_type": "PLA", "tray_color": "FFFFFFFF", "remain": 87},
+                {"id": "1", "tray_type": "PETG", "tray_color": "000000FF", "remain": -1},
+                {"id": "2"},
+                {"id": "3", "tray_type": "", "remain": -1}
+            ]}]}}}"#,
+        );
+
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots[0].slot, "0");
+        assert_eq!(slots[0].remaining_percent, Some(87));
+        assert_eq!(slots[1].filament_type, "PETG");
+        assert_eq!(slots[1].remaining_percent, None);
     }
 }
