@@ -30,6 +30,7 @@ pub fn Nav() -> impl IntoView {
                                         <nav class="navbar-links">
                                             <a href="/admin">"Commandes"</a>
                                             <a href="/admin/materials">"Materiaux"</a>
+                                            <a href="/admin/printers">"Imprimantes"</a>
                                             <form method="post" action="/auth/logout" class="nav-form">
                                                 <CsrfField />
                                                 <button type="submit" class="btn-nav">"Deconnexion"</button>

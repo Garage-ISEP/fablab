@@ -5,7 +5,11 @@ use std::process;
 use std::sync::Arc;
 
 use axum::middleware;
+use fablab::infrastructure::mqtt::SharedPrinterStatuses;
+use fablab::infrastructure::mqtt::start_cloud_mqtt_listener;
 use leptos::config::LeptosOptions;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
 use tower_sessions::cookie::SameSite;
 use tower_sessions::{Expiry, SessionManagerLayer};
 
@@ -49,6 +53,9 @@ struct Config {
     cas_service_url: String,
     upload_dir: String,
     app_base_url: String,
+    bambu_uid: String,
+    babmu_token: String,
+    bambu_device_serials: String,
 }
 
 fn load_config() -> Config {
@@ -74,6 +81,18 @@ fn load_config() -> Config {
         errors.push("APP_BASE_URL");
         String::new()
     });
+    let bambu_uid = env::var("BAMBU_UID").unwrap_or_else(|_| {
+        errors.push("BAMBU_UID");
+        String::new()
+    });
+    let babmu_token = env::var("BAMBU_TOKEN").unwrap_or_else(|_| {
+        errors.push("BAMBU_TOKEN");
+        String::new()
+    });
+    let bambu_device_serials = env::var("BAMBU_DEVICE_SERIALS").unwrap_or_else(|_| {
+        errors.push("BAMBU_DEVICE_SERIALS");
+        String::new()
+    });
 
     if !errors.is_empty() {
         eprintln!(
@@ -89,11 +108,18 @@ fn load_config() -> Config {
         cas_service_url,
         upload_dir,
         app_base_url,
+        bambu_uid,
+        babmu_token,
+        bambu_device_serials,
     }
 }
 
 #[tokio::main]
 async fn main() {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     if let Err(e) = dotenvy::dotenv() {
         eprintln!("Note: no .env file loaded ({e})");
     }
@@ -198,6 +224,14 @@ async fn main() {
     let admin_login = Arc::new(AdminLoginUseCase::new(Arc::clone(&admin_repo), verifier));
     let cas_client = Arc::new(CasClient::new(config.cas_base_url));
 
+    let printer_statuses: SharedPrinterStatuses = Arc::new(RwLock::new(HashMap::new()));
+    start_mqtt_listeners(
+        &printer_statuses,
+        config.bambu_uid,
+        config.babmu_token,
+        config.bambu_device_serials,
+    );
+
     let upload_order_file = Arc::new(UploadOrderFileUseCase::new(
         Arc::clone(&order_repo),
         Arc::clone(&order_file_repo),
@@ -257,6 +291,7 @@ async fn main() {
         storage,
         cas_client,
         cas_service_url: Arc::from(config.cas_service_url.as_str()),
+        printer_statuses,
         user_repo,
     });
 
@@ -286,6 +321,38 @@ async fn main() {
     if let Err(e) = axum::serve(listener, app).await {
         eprintln!("Error: server failed: {e}");
         process::exit(1);
+    }
+}
+
+fn start_mqtt_listeners(
+    statuses: &SharedPrinterStatuses,
+    uid: String,
+    token: String,
+    serials: String,
+) {
+    let serials: Vec<String> = serials
+        .split(',')
+        .map(str::trim)
+        .filter(|serial| !serial.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+
+    for device_serial in serials {
+        let listener_uid = uid.clone();
+        let listener_token = token.clone();
+        let listener_statuses = Arc::clone(statuses);
+        tokio::spawn(async move {
+            if let Err(error) = start_cloud_mqtt_listener(
+                listener_uid,
+                listener_token,
+                device_serial.clone(),
+                listener_statuses,
+            )
+            .await
+            {
+                eprintln!("MQTT listener failed for printer {device_serial}: {error}");
+            }
+        });
     }
 }
 

@@ -53,6 +53,7 @@ pub fn HomePage() -> impl IntoView {
                                         <div class="hero-actions">
                                             <a href="/admin" class="btn btn-primary btn-lg">"Tableau de bord"</a>
                                             <a href="/admin/materials" class="btn btn-lg">"Materiaux"</a>
+                                            <a href="/admin/printers" class="btn btn-lg">"Imprimantes"</a>
                                         </div>
                                     }.into_any()
                                 }

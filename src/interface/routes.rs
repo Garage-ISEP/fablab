@@ -32,6 +32,7 @@ use crate::infrastructure::db::order_file_repo::SqliteOrderFileRepository;
 use crate::infrastructure::db::order_repo::SqliteOrderRepository;
 use crate::infrastructure::db::user_repo::SqliteUserRepository;
 use crate::infrastructure::email::smtp_sender::SmtpNotificationSender;
+use crate::infrastructure::mqtt::SharedPrinterStatuses;
 use crate::infrastructure::storage::local_fs::LocalFileStorage;
 use crate::interface::file_handlers::{
     admin_delete_material_handler, admin_delete_order_handler, delete_file_handler,
@@ -103,6 +104,7 @@ pub struct AppState {
     pub storage: Arc<LocalFileStorage>,
     pub cas_client: Arc<CasClient>,
     pub cas_service_url: Arc<str>,
+    pub printer_statuses: SharedPrinterStatuses,
     user_repo: Arc<SqliteUserRepository>,
 }
 
@@ -127,6 +129,7 @@ pub struct AppStateParams {
     pub storage: Arc<LocalFileStorage>,
     pub cas_client: Arc<CasClient>,
     pub cas_service_url: Arc<str>,
+    pub printer_statuses: SharedPrinterStatuses,
     pub user_repo: Arc<SqliteUserRepository>,
 }
 
@@ -153,6 +156,7 @@ impl AppState {
             storage: p.storage,
             cas_client: p.cas_client,
             cas_service_url: p.cas_service_url,
+            printer_statuses: p.printer_statuses,
             user_repo: p.user_repo,
         }
     }

@@ -207,6 +207,8 @@ a:hover { color: var(--color-primary-hover); }
 
 .page-header h1 { margin: 0; }
 
+.printer-status + .printer-status { margin-top: 2rem; }
+
 /* ============================================================
    Navbar
    ============================================================ */
