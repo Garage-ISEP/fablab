@@ -150,7 +150,7 @@ impl OrderRepository for SqliteOrderRepository {
         })
     }
 
-    fn sum_weight_by_material(
+    fn sum_reserved_weight_by_material(
         &self,
         material_id: i64,
         exclude_order_id: Option<i64>,
@@ -160,7 +160,7 @@ impl OrderRepository for SqliteOrderRepository {
                 "SELECT COALESCE(SUM(sliced_weight_grams), 0.0) \
                  FROM orders \
                  WHERE material_id = ?1 \
-                   AND status != 'annule' \
+                   AND status IN ('a_traiter', 'en_traitement') \
                    AND (?2 IS NULL OR id != ?2)",
                 rusqlite::params![material_id, exclude_order_id],
                 |row| row.get::<_, f64>(0),
@@ -172,7 +172,7 @@ impl OrderRepository for SqliteOrderRepository {
     fn update_if_stock_sufficient(
         &self,
         order: &Order,
-        spool_weight_grams: f64,
+        measured_remaining_grams: f64,
     ) -> Result<(), DomainError> {
         let material_id = order.material_id.ok_or_else(|| {
             DomainError::Validation(
@@ -186,12 +186,12 @@ impl OrderRepository for SqliteOrderRepository {
         })?;
 
         self.pool.with_transaction(|tx| {
-            let consumed: f64 = tx
+            let reserved: f64 = tx
                 .query_row(
                     "SELECT COALESCE(SUM(sliced_weight_grams), 0.0) \
                  FROM orders \
                  WHERE material_id = ?1 \
-                   AND status != 'annule' \
+                   AND status IN ('a_traiter', 'en_traitement') \
                    AND id != ?2",
                     rusqlite::params![material_id, order.id],
                     |row| row.get::<_, f64>(0),
@@ -200,8 +200,8 @@ impl OrderRepository for SqliteOrderRepository {
 
             crate::domain::stock::check_sufficient(
                 material_id,
-                spool_weight_grams,
-                consumed,
+                measured_remaining_grams,
+                reserved,
                 requested,
             )?;
 

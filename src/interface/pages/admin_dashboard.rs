@@ -6,6 +6,7 @@ use leptos_router::hooks::use_query_map;
 use crate::application::dtos::order_filter::{OrderFilter, PaymentFilter};
 use crate::application::dtos::order_output::OrderView;
 use crate::application::dtos::order_sort::{OrderSort, SortColumn, SortDirection};
+use crate::interface::components::bambu_banner::BambuStatusBanner;
 use crate::interface::components::flash_message::FlashMessage;
 use crate::interface::components::order_table::OrderTable;
 use crate::interface::session_helpers::extract_admin_caller;
@@ -112,6 +113,7 @@ pub fn AdminDashboardPage() -> impl IntoView {
             </div>
 
             <FlashMessage />
+            <BambuStatusBanner />
 
             {move ||
             {

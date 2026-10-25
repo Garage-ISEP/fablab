@@ -1,35 +1,58 @@
 use leptos::prelude::*;
+use leptos::server_fn::ServerFn;
 
-use leptos::{IntoView, view};
-use serde::{Deserialize, Serialize};
-
-use crate::infrastructure::mqtt::PrinterStatus;
+use crate::application::use_cases::printers::PrinterOverview;
+use crate::domain::filament::{ConnectionState, LoadedSpool, PrinterSnapshot, color_name};
+use crate::interface::components::bambu_banner::BambuStatusBanner;
+use crate::interface::components::csrf_field::CsrfField;
+use crate::interface::components::flash_message::FlashMessage;
 use crate::interface::session_helpers::extract_admin_caller;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PrinterView {
-    pub device_serial: String,
-    pub status: PrinterStatus,
+/// Bambu does not document the token lifetime; OpenBambuAPI reports
+/// about three months.
+const TOKEN_LIFETIME_DAYS: i64 = 90;
+
+#[server]
+pub async fn fetch_printer_overview() -> Result<PrinterOverview, ServerFnError> {
+    let caller = extract_admin_caller().await?;
+    let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
+    let printer_overview = state.printer_overview.clone();
+    tokio::task::spawn_blocking(move || {
+        printer_overview
+            .execute(&caller)
+            .map_err(|e| ServerFnError::new(format!("{e}")))
+    })
+    .await
+    .map_err(|e| ServerFnError::new(format!("{e}")))?
 }
 
 #[server]
-pub async fn fetch_printer_info() -> Result<Vec<PrinterView>, ServerFnError> {
-    let _caller = extract_admin_caller().await?;
-    let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
-    let statuses = state.printer_statuses.read().await;
+pub async fn set_bambu_token_action(token: String) -> Result<(), ServerFnError> {
+    use crate::interface::error_messages::user_message;
+    use crate::interface::flash::{FlashLevel, set_flash};
+    use tower_sessions::Session;
 
-    Ok(statuses
-        .iter()
-        .map(|(device_serial, status)| PrinterView {
-            device_serial: device_serial.clone(),
-            status: status.clone(),
-        })
-        .collect())
+    let caller = extract_admin_caller().await?;
+    let session: Session = leptos_axum::extract().await?;
+
+    let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
+    match state.configure_bambu.execute(&token, &caller).await {
+        Ok(count) => {
+            let message = format!("Token enregistre : {count} imprimante(s) trouvee(s).");
+            let _ = set_flash(&session, FlashLevel::Success, &message).await;
+        }
+        Err(e) => {
+            let _ = set_flash(&session, FlashLevel::Error, user_message(&e)).await;
+        }
+    }
+
+    leptos_axum::redirect("/admin/printers");
+    Ok(())
 }
 
-fn format_remaining_time(seconds: u32) -> String {
-    let hours = seconds / 3600;
-    let minutes = (seconds % 3600) / 60;
+fn format_remaining_time(minutes: u32) -> String {
+    let hours = minutes / 60;
+    let minutes = minutes % 60;
     if hours > 0 {
         format!("{hours} h {minutes} min")
     } else {
@@ -37,81 +60,165 @@ fn format_remaining_time(seconds: u32) -> String {
     }
 }
 
-fn render_printer(printer: PrinterView) -> impl IntoView {
-    let status = printer.status;
+/// "2026-10-25 19:02:20" (UTC) -> ("25/10/2026", estimated expiry).
+fn describe_token_date(saved_at: &str) -> Option<(String, String)> {
+    use time::format_description::parse;
+
+    let stored = parse("[year]-[month]-[day] [hour]:[minute]:[second]").ok()?;
+    let display = parse("[day]/[month]/[year]").ok()?;
+    let parsed = time::PrimitiveDateTime::parse(saved_at, &stored).ok()?;
+    let expiry = parsed + time::Duration::days(TOKEN_LIFETIME_DAYS);
+    Some((parsed.format(&display).ok()?, expiry.format(&display).ok()?))
+}
+
+fn connection_label(connection: &ConnectionState) -> String {
+    match connection {
+        ConnectionState::NotConfigured => "Non configuree".to_owned(),
+        ConnectionState::Connecting => "Connexion en cours...".to_owned(),
+        ConnectionState::Connected => "Connectee".to_owned(),
+        ConnectionState::TokenRejected => "Token refuse ou expire".to_owned(),
+        ConnectionState::Unreachable(reason) => format!("Injoignable ({reason})"),
+    }
+}
+
+fn render_connection(
+    connection: &ConnectionState,
+    token_saved_at: Option<&str>,
+) -> impl IntoView + use<> {
+    let status = connection_label(connection);
+    let token_info = match token_saved_at {
+        Some(saved_at) => match describe_token_date(saved_at) {
+            Some((saved, expiry)) => format!(
+                "Token enregistre le {saved}. Il expire en general environ 3 mois apres sa creation (vers le {expiry})."
+            ),
+            None => format!("Token enregistre le {saved_at}."),
+        },
+        None => "Aucun token enregistre.".to_owned(),
+    };
+
+    view! {
+        <section class="detail-card">
+            <h2>"Connexion Bambu"</h2>
+            <dl class="detail-list">
+                <dt>"Etat"</dt><dd>{status}</dd>
+                <dt>"Token"</dt><dd>{token_info}</dd>
+            </dl>
+            <form method="post" action=SetBambuTokenAction::url() class="material-form">
+                <CsrfField />
+                <div class="form-group">
+                    <label for="bambu-token">"Nouveau token d'acces"</label>
+                    <input
+                        id="bambu-token"
+                        name="token"
+                        type="password"
+                        autocomplete="off"
+                        required
+                        placeholder="Coller le token du compte de service"
+                    />
+                </div>
+                <p class="hint">
+                    "Le token s'obtient en se connectant au compte de service via l'API Bambu "
+                    "(POST /v1/user-service/user/login, voir OpenBambuAPI). "
+                    "Il est verifie aupres de Bambu avant d'etre enregistre, et la liste des imprimantes est recuperee automatiquement."
+                </p>
+                <button type="submit" class="btn btn-primary">"Enregistrer le token"</button>
+            </form>
+        </section>
+    }
+}
+
+fn render_spool(spool: LoadedSpool) -> impl IntoView {
+    let swatch = (!spool.color_hex.is_empty()).then(|| format!("background: #{}", spool.color_hex));
+    let color = color_name(&spool.color_hex);
+    let remaining = match (spool.remaining_percent, spool.remaining_grams()) {
+        (Some(percent), Some(grams)) => format!("{percent} % (~{grams:.0} g)"),
+        (Some(percent), None) => format!("{percent} %"),
+        (None, _) => "Non disponible".to_owned(),
+    };
+
+    view! {
+        <tr>
+            <td class="td-name">{spool.slot}</td>
+            <td>{spool.name}</td>
+            <td>
+                {swatch.map(|style| view! { <span class="color-swatch" style=style></span> })}
+                {color}
+            </td>
+            <td>{remaining}</td>
+        </tr>
+    }
+}
+
+fn render_printer(printer: PrinterSnapshot) -> impl IntoView {
+    let title = if printer.device.model.is_empty() || printer.device.model == printer.device.name {
+        printer.device.name.clone()
+    } else {
+        format!("{} ({})", printer.device.name, printer.device.model)
+    };
+    let (status_class, status_label) = if printer.fresh {
+        ("printer-online", "En ligne")
+    } else {
+        ("printer-offline", "Hors ligne : niveaux non garantis")
+    };
+
     view! {
         <section class="printer-status">
-            <h2>{format!("Imprimante {}", printer.device_serial)}</h2>
-            <p class=if status.online { "printer-online" } else { "printer-offline" }>
-                {if status.online { "En ligne" } else { "Hors ligne" }}
-            </p>
-            {if status.online {
-                view! {
+            <h2>{title}</h2>
+            <p class="hint">{format!("Numero de serie : {}", printer.device.serial)}</p>
+            <p class=status_class>{status_label}</p>
+            <table class="data-table">
+                <tbody>
+                    <tr>
+                        <td class="td-name">"Etat"</td>
+                        <td>{printer.gcode_state}</td>
+                    </tr>
+                    <tr>
+                        <td class="td-name">"Progression"</td>
+                        <td>{format!("{} %", printer.mc_percent)}</td>
+                    </tr>
+                    <tr>
+                        <td class="td-name">"Temps restant"</td>
+                        <td>{format_remaining_time(printer.mc_remaining_time)}</td>
+                    </tr>
+                    <tr>
+                        <td class="td-name">"Couche"</td>
+                        <td>{format!("{} / {}", printer.layer_num, printer.total_layer_num)}</td>
+                    </tr>
+                    <tr>
+                        <td class="td-name">"Fichier"</td>
+                        <td>{printer.subtask_name}</td>
+                    </tr>
+                    <tr>
+                        <td class="td-name">"Buse"</td>
+                        <td>{format!("{:.1} °C", printer.nozzle_temper)}</td>
+                    </tr>
+                    <tr>
+                        <td class="td-name">"Plateau"</td>
+                        <td>{format!("{:.1} °C", printer.bed_temper)}</td>
+                    </tr>
+                </tbody>
+            </table>
+            <h3>"Filament (AMS)"</h3>
+            {match printer.spools
+            {
+                None => view! { <p class="hint">"Contenu de l'AMS pas encore recu."</p> }.into_any(),
+                Some(spools) if spools.is_empty() => view! { <p>"Aucune bobine chargee."</p> }.into_any(),
+                Some(spools) => view!
+                {
                     <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>"Slot"</th>
+                                <th>"Filament"</th>
+                                <th>"Couleur"</th>
+                                <th>"Restant"</th>
+                            </tr>
+                        </thead>
                         <tbody>
-                            <tr>
-                                <td class="td-name">"Etat"</td>
-                                <td>{status.gcode_state}</td>
-                            </tr>
-                            <tr>
-                                <td class="td-name">"Progression"</td>
-                                <td>{format!("{} %", status.mc_percent)}</td>
-                            </tr>
-                            <tr>
-                                <td class="td-name">"Temps restant"</td>
-                                <td>{format_remaining_time(status.mc_remaining_time)}</td>
-                            </tr>
-                            <tr>
-                                <td class="td-name">"Couche"</td>
-                                <td>{format!("{} / {}", status.layer_num, status.total_layer_num)}</td>
-                            </tr>
-                            <tr>
-                                <td class="td-name">"Fichier"</td>
-                                <td>{status.subtask_name}</td>
-                            </tr>
-                            <tr>
-                                <td class="td-name">"Buse"</td>
-                                <td>{format!("{:.1} °C", status.nozzle_temper)}</td>
-                            </tr>
-                            <tr>
-                                <td class="td-name">"Plateau"</td>
-                                <td>{format!("{:.1} °C", status.bed_temper)}</td>
-                            </tr>
+                            {spools.into_iter().map(render_spool).collect::<Vec<_>>()}
                         </tbody>
                     </table>
-                    <h3>"Filament"</h3>
-                    {if !status.filament_slots.is_empty() {
-                        view! {
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>"Slot"</th>
-                                        <th>"Type"</th>
-                                        <th>"Couleur"</th>
-                                        <th>"Restant"</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {status.filament_slots.into_iter().map(|filament| view! {
-                                        <tr>
-                                            <td>{filament.slot}</td>
-                                            <td>{filament.filament_type}</td>
-                                            <td>{filament.color}</td>
-                                            <td>{match filament.remaining_percent {
-                                                Some(percent) => format!("{percent} %"),
-                                                None => "Non disponible".to_string(),
-                                            }}</td>
-                                        </tr>
-                                    }).collect::<Vec<_>>()}
-                                </tbody>
-                            </table>
-                        }.into_any()
-                    } else {
-                        view! { <p>"Aucun filament detecte."</p> }.into_any()
-                    }}
-                }.into_any()
-            } else {
-                view! { <p>"Aucune donnee disponible hors ligne."</p> }.into_any()
+                }.into_any(),
             }}
         </section>
     }
@@ -119,24 +226,31 @@ fn render_printer(printer: PrinterView) -> impl IntoView {
 
 #[component]
 pub fn AdminPrintersPage() -> impl IntoView {
-    let printers = Resource::new(|| (), |_| fetch_printer_info());
+    let overview = Resource::new(|| (), |_| fetch_printer_overview());
 
     view! {
         <div class="page-card">
             <div class="page-header">
                 <h1>"Imprimantes"</h1>
+                <a href="/admin/printers" class="btn">"Rafraichir"</a>
             </div>
 
+            <FlashMessage />
+            <BambuStatusBanner />
+
             <Suspense fallback=|| view! { <p class="loading">"Chargement..."</p> }>
-                {move || printers.get().map(|result| match result {
-                    Ok(printers) if printers.is_empty() => view! {
-                        <section class="empty-state">
-                            <p>"Aucune imprimante configuree."</p>
-                        </section>
-                    }.into_any(),
-                    Ok(printers) => view! {
-                        {printers.into_iter().map(render_printer).collect::<Vec<_>>()}
-                    }.into_any(),
+                {move || overview.get().map(|result| match result {
+                    Ok(overview) => {
+                        let connection = render_connection(
+                            &overview.inventory.connection,
+                            overview.token_saved_at.as_deref(),
+                        );
+                        let printers = overview.inventory.printers;
+                        view! {
+                            {connection}
+                            {printers.into_iter().map(render_printer).collect::<Vec<_>>()}
+                        }.into_any()
+                    }
                     Err(_) => view! {
                         <div class="alert alert-error">
                             <p>"Acces refuse."</p>

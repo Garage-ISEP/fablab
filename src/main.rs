@@ -5,11 +5,7 @@ use std::process;
 use std::sync::Arc;
 
 use axum::middleware;
-use fablab::infrastructure::mqtt::SharedPrinterStatuses;
-use fablab::infrastructure::mqtt::start_cloud_mqtt_listener;
 use leptos::config::LeptosOptions;
-use std::collections::HashMap;
-use tokio::sync::RwLock;
 use tower_sessions::cookie::SameSite;
 use tower_sessions::{Expiry, SessionManagerLayer};
 
@@ -18,19 +14,24 @@ use fablab::application::use_cases::get_order::GetOrderUseCase;
 use fablab::application::use_cases::get_user_phone::GetUserPhoneUseCase;
 use fablab::application::use_cases::list_materials::ListMaterialsUseCase;
 use fablab::application::use_cases::list_orders::ListOrdersUseCase;
-use fablab::application::use_cases::manage_material::ManageMaterialUseCase;
 use fablab::application::use_cases::notify_order::NotifyNewOrderUseCase;
 use fablab::application::use_cases::order_files::{
     AdminDeleteOrderUseCase, CancelOrderUseCase, DeleteOrderFileUseCase, DownloadOrderFileUseCase,
     PurgeOrderFilesUseCase, StudentCancelOrderUseCase, UploadOrderFileUseCase,
 };
+use fablab::application::use_cases::printers::{
+    ConfigureBambuUseCase, GetPrinterOverviewUseCase, SyncMaterialsUseCase,
+};
 use fablab::application::use_cases::submit_order::SubmitOrderUseCase;
 use fablab::application::use_cases::update_order::UpdateOrderUseCase;
 use fablab::application::use_cases::update_phone::UpdatePhoneUseCase;
-use fablab::domain::repositories::AdminRepository;
+use fablab::domain::repositories::{AdminRepository, BambuCloudApi, PrinterTelemetry};
 use fablab::infrastructure::auth::argon2::{Argon2PasswordVerifier, hash_password};
+use fablab::infrastructure::bambu::cloud_api::ReqwestBambuCloudApi;
+use fablab::infrastructure::bambu::mqtt::BambuMqttMonitor;
 use fablab::infrastructure::cas::client::CasClient;
 use fablab::infrastructure::db::admin_repo::SqliteAdminRepository;
+use fablab::infrastructure::db::bambu_account_repo::SqliteBambuAccountRepository;
 use fablab::infrastructure::db::material_repo::SqliteMaterialRepository;
 use fablab::infrastructure::db::migrations::run_migrations;
 use fablab::infrastructure::db::order_file_repo::SqliteOrderFileRepository;
@@ -53,9 +54,6 @@ struct Config {
     cas_service_url: String,
     upload_dir: String,
     app_base_url: String,
-    bambu_uid: String,
-    babmu_token: String,
-    bambu_device_serials: String,
 }
 
 fn load_config() -> Config {
@@ -81,18 +79,6 @@ fn load_config() -> Config {
         errors.push("APP_BASE_URL");
         String::new()
     });
-    let bambu_uid = env::var("BAMBU_UID").unwrap_or_else(|_| {
-        errors.push("BAMBU_UID");
-        String::new()
-    });
-    let babmu_token = env::var("BAMBU_TOKEN").unwrap_or_else(|_| {
-        errors.push("BAMBU_TOKEN");
-        String::new()
-    });
-    let bambu_device_serials = env::var("BAMBU_DEVICE_SERIALS").unwrap_or_else(|_| {
-        errors.push("BAMBU_DEVICE_SERIALS");
-        String::new()
-    });
 
     if !errors.is_empty() {
         eprintln!(
@@ -108,9 +94,6 @@ fn load_config() -> Config {
         cas_service_url,
         upload_dir,
         app_base_url,
-        bambu_uid,
-        babmu_token,
-        bambu_device_serials,
     }
 }
 
@@ -165,6 +148,7 @@ async fn main() {
     let user_repo = Arc::new(SqliteUserRepository::new(pool.clone()));
     let material_repo = Arc::new(SqliteMaterialRepository::new(pool.clone()));
     let admin_repo = Arc::new(SqliteAdminRepository::new(pool.clone()));
+    let bambu_account_repo = Arc::new(SqliteBambuAccountRepository::new(pool.clone()));
 
     let notifier = match SmtpNotificationSender::new(email_config) {
         Ok(s) => Arc::new(s),
@@ -196,11 +180,16 @@ async fn main() {
         Arc::clone(&order_file_repo),
         Arc::clone(&storage_dyn),
     ));
+    // Idle until a saved token is resumed below or the admin enters one.
+    let telemetry: Arc<dyn PrinterTelemetry> = BambuMqttMonitor::start();
+    let bambu_api: Arc<dyn BambuCloudApi> = Arc::new(ReqwestBambuCloudApi::new());
+
     let update_order = Arc::new(UpdateOrderUseCase::new(
         Arc::clone(&order_repo),
         Arc::clone(&user_repo),
         Arc::clone(&material_repo),
         Arc::clone(&purge_order_files),
+        Arc::clone(&telemetry),
     ));
     let list_orders = Arc::new(ListOrdersUseCase::new(
         Arc::clone(&order_repo),
@@ -216,21 +205,31 @@ async fn main() {
     let list_materials = Arc::new(ListMaterialsUseCase::new(
         Arc::clone(&material_repo),
         Arc::clone(&order_repo),
+        Arc::clone(&telemetry),
     ));
-    let manage_material = Arc::new(ManageMaterialUseCase::new(Arc::clone(&material_repo)));
+    let printer_overview = Arc::new(GetPrinterOverviewUseCase::new(
+        Arc::clone(&bambu_account_repo),
+        Arc::clone(&telemetry),
+    ));
+    let configure_bambu = Arc::new(ConfigureBambuUseCase::new(
+        Arc::clone(&bambu_account_repo),
+        bambu_api,
+        Arc::clone(&telemetry),
+    ));
+    match configure_bambu.resume() {
+        Ok(true) => eprintln!("Bambu: connecting with the saved token"),
+        Ok(false) => eprintln!("Bambu: no token saved yet, set one on /admin/printers"),
+        Err(e) => eprintln!("Error: failed to load the Bambu account: {e}"),
+    }
+    spawn_material_sync(Arc::new(SyncMaterialsUseCase::new(
+        Arc::clone(&material_repo),
+        Arc::clone(&telemetry),
+    )));
     let update_phone = Arc::new(UpdatePhoneUseCase::new(Arc::clone(&user_repo)));
     let get_user_phone = Arc::new(GetUserPhoneUseCase::new(Arc::clone(&user_repo)));
     let verifier = Arc::new(Argon2PasswordVerifier);
     let admin_login = Arc::new(AdminLoginUseCase::new(Arc::clone(&admin_repo), verifier));
     let cas_client = Arc::new(CasClient::new(config.cas_base_url));
-
-    let printer_statuses: SharedPrinterStatuses = Arc::new(RwLock::new(HashMap::new()));
-    start_mqtt_listeners(
-        &printer_statuses,
-        config.bambu_uid,
-        config.babmu_token,
-        config.bambu_device_serials,
-    );
 
     let upload_order_file = Arc::new(UploadOrderFileUseCase::new(
         Arc::clone(&order_repo),
@@ -277,7 +276,6 @@ async fn main() {
         list_orders,
         get_order,
         list_materials,
-        manage_material,
         update_phone,
         get_user_phone,
         admin_login,
@@ -291,7 +289,8 @@ async fn main() {
         storage,
         cas_client,
         cas_service_url: Arc::from(config.cas_service_url.as_str()),
-        printer_statuses,
+        printer_overview,
+        configure_bambu,
         user_repo,
     });
 
@@ -324,36 +323,21 @@ async fn main() {
     }
 }
 
-fn start_mqtt_listeners(
-    statuses: &SharedPrinterStatuses,
-    uid: String,
-    token: String,
-    serials: String,
-) {
-    let serials: Vec<String> = serials
-        .split(',')
-        .map(str::trim)
-        .filter(|serial| !serial.is_empty())
-        .map(ToOwned::to_owned)
-        .collect();
-
-    for device_serial in serials {
-        let listener_uid = uid.clone();
-        let listener_token = token.clone();
-        let listener_statuses = Arc::clone(statuses);
-        tokio::spawn(async move {
-            if let Err(error) = start_cloud_mqtt_listener(
-                listener_uid,
-                listener_token,
-                device_serial.clone(),
-                listener_statuses,
-            )
-            .await
-            {
-                eprintln!("MQTT listener failed for printer {device_serial}: {error}");
+/// Keeps the material list in line with the AMS content.
+fn spawn_material_sync(sync: Arc<SyncMaterialsUseCase<SqliteMaterialRepository>>) {
+    tokio::spawn(async move {
+        let mut synced_revision = None;
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+        loop {
+            interval.tick().await;
+            let sync = Arc::clone(&sync);
+            match tokio::task::spawn_blocking(move || sync.execute(synced_revision)).await {
+                Ok(Ok(revision)) => synced_revision = revision,
+                Ok(Err(e)) => eprintln!("Error: material sync failed: {e}"),
+                Err(e) => eprintln!("Error: material sync task failed: {e}"),
             }
-        });
-    }
+        }
+    });
 }
 
 fn seed_admin(admin_repo: &Arc<SqliteAdminRepository>) {

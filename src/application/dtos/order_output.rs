@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::domain::filament::InventorySnapshot;
 use crate::domain::material::Material;
 use crate::domain::order::Order;
 use crate::domain::order_file::OrderFile;
@@ -65,31 +66,46 @@ impl OrderView {
     }
 }
 
-/// Admin-facing material view enriched with derived stock data.
+/// Admin-facing material view enriched with stock data from the AMS.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MaterialView {
     pub id: i64,
     pub name: String,
     pub color: String,
+    pub color_hex: Option<String>,
     pub label: String,
+    /// Currently loaded in an AMS.
     pub available: bool,
-    pub spool_weight_grams: f64,
-    pub remaining_weight_grams: f64,
+    /// Where it is loaded, e.g. "X1C B3 (9 %)".
+    pub locations: Vec<String>,
+    /// `None` when no fresh printer reports a usable amount.
+    pub measured_remaining_grams: Option<f64>,
+    /// Sliced weight of the orders not printed yet.
+    pub reserved_grams: f64,
+    /// Measured minus reserved; `None` when the stock is unknown.
+    pub available_grams: Option<f64>,
 }
 
 impl MaterialView {
-    pub fn from_material(material: &Material, consumed_grams: f64) -> Self {
+    pub fn from_material(
+        material: &Material,
+        inventory: &InventorySnapshot,
+        reserved_grams: f64,
+    ) -> Self {
+        let key = material.bambu_key.as_deref();
+        let measured = key.and_then(|k| inventory.measured_remaining_grams(k));
         Self {
             id: material.id,
             name: material.name.clone(),
             color: material.color.clone(),
+            color_hex: material.color_hex.clone(),
             label: material.label(),
             available: material.available,
-            spool_weight_grams: material.spool_weight_grams,
-            remaining_weight_grams: crate::domain::stock::remaining_weight(
-                material.spool_weight_grams,
-                consumed_grams,
-            ),
+            locations: key.map(|k| inventory.locations(k)).unwrap_or_default(),
+            measured_remaining_grams: measured,
+            reserved_grams,
+            available_grams: measured
+                .map(|grams| crate::domain::stock::available_weight(grams, reserved_grams)),
         }
     }
 }
