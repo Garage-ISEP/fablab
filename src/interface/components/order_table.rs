@@ -1,8 +1,8 @@
 use leptos::prelude::*;
 
+use super::status_badge::StatusBadge;
 use crate::application::dtos::order_output::OrderView;
 use crate::application::dtos::order_sort::{OrderSort, SortColumn, SortDirection};
-use super::status_badge::StatusBadge;
 
 /// Renders the admin-or-student orders table.
 ///
@@ -24,43 +24,31 @@ pub fn OrderTable(
     #[prop(optional)] sort: Option<OrderSort>,
     /// Base URL with filters preserved, e.g. "/admin?status=a_traiter".
     /// Sort params will be appended. Required for sortable headers.
-    #[prop(optional)] sort_base_url: Option<String>,
-) -> impl IntoView
-{
-    let render_header = move |label: &'static str, col: SortColumn| -> AnyView
-    {
-        match (sort, sort_base_url.clone())
-        {
-            (Some(current), Some(base)) =>
-            {
-                let (next_dir, indicator) = if current.column == col
-                {
+    #[prop(optional)]
+    sort_base_url: Option<String>,
+) -> impl IntoView {
+    let render_header = move |label: &'static str, col: SortColumn| -> AnyView {
+        match (sort, sort_base_url.clone()) {
+            (Some(current), Some(base)) => {
+                let (next_dir, indicator) = if current.column == col {
                     let next = current.direction.toggled();
-                    let arrow = match current.direction
-                    {
+                    let arrow = match current.direction {
                         SortDirection::Asc => " ^",
                         SortDirection::Desc => " v",
                     };
                     (next, arrow)
-                }
-                else
-                {
+                } else {
                     (SortDirection::Asc, "")
                 };
 
                 let separator = if base.contains('?') { "&" } else { "?" };
-                let dir_str = match next_dir
-                {
+                let dir_str = match next_dir {
                     SortDirection::Asc => "asc",
                     SortDirection::Desc => "desc",
                 };
-                let href = format!(
-                    "{}{}sort={}&dir={}",
-                    base, separator, col.as_str(), dir_str,
-                );
+                let href = format!("{}{}sort={}&dir={}", base, separator, col.as_str(), dir_str,);
 
-                view!
-                {
+                view! {
                     <th class="sortable">
                         <a href=href class="sort-link">
                             {label}{indicator}
@@ -69,24 +57,17 @@ pub fn OrderTable(
                 }
                 .into_any()
             }
-            _ =>
-            {
-                view! { <th>{label}</th> }.into_any()
-            }
+            _ => view! { <th>{label}</th> }.into_any(),
         }
     };
 
-    let wrapper_class = if is_admin
-    {
+    let wrapper_class = if is_admin {
         "table-scroll table-scroll--admin"
-    }
-    else
-    {
+    } else {
         "table-scroll table-scroll--client"
     };
 
-    view!
-    {
+    view! {
         <div class=wrapper_class>
             <table class="data-table">
                 <thead>

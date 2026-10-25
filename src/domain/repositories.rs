@@ -5,8 +5,7 @@ use super::order::{NewOrder, Order};
 use super::order_file::{NewOrderFile, OrderFile, StorageStats};
 use super::user::{AdminUser, CasUser, User};
 
-pub trait OrderRepository: Send + Sync
-{
+pub trait OrderRepository: Send + Sync {
     fn find_all(&self) -> Result<Vec<Order>, DomainError>;
     fn find_by_user(&self, user_id: i64) -> Result<Vec<Order>, DomainError>;
     fn find_by_id(&self, id: i64) -> Result<Option<Order>, DomainError>;
@@ -27,8 +26,7 @@ pub trait OrderRepository: Send + Sync
     ) -> Result<(), DomainError>;
 }
 
-pub trait OrderFileRepository: Send + Sync
-{
+pub trait OrderFileRepository: Send + Sync {
     fn create(&self, file: NewOrderFile) -> Result<OrderFile, DomainError>;
     fn find_by_id(&self, id: i64) -> Result<Option<OrderFile>, DomainError>;
     fn find_by_order(&self, order_id: i64) -> Result<Vec<OrderFile>, DomainError>;
@@ -37,8 +35,7 @@ pub trait OrderFileRepository: Send + Sync
     fn storage_stats(&self) -> Result<StorageStats, DomainError>;
 }
 
-pub trait UserRepository: Send + Sync
-{
+pub trait UserRepository: Send + Sync {
     fn find_by_id(&self, id: i64) -> Result<Option<User>, DomainError>;
     fn find_by_ids(&self, ids: &[i64]) -> Result<Vec<User>, DomainError>;
     fn find_by_cas_login(&self, login: &str) -> Result<Option<User>, DomainError>;
@@ -46,8 +43,7 @@ pub trait UserRepository: Send + Sync
     fn update_phone(&self, user_id: i64, phone: &str) -> Result<(), DomainError>;
 }
 
-pub trait MaterialRepository: Send + Sync
-{
+pub trait MaterialRepository: Send + Sync {
     fn find_all(&self) -> Result<Vec<Material>, DomainError>;
     fn find_available(&self) -> Result<Vec<Material>, DomainError>;
     fn find_by_id(&self, id: i64) -> Result<Option<Material>, DomainError>;
@@ -58,19 +54,16 @@ pub trait MaterialRepository: Send + Sync
     fn delete(&self, id: i64) -> Result<(), DomainError>;
 }
 
-pub trait AdminRepository: Send + Sync
-{
+pub trait AdminRepository: Send + Sync {
     fn find_by_login(&self, login: &str) -> Result<Option<AdminUser>, DomainError>;
     fn create(&self, login: &str, password_hash: &str) -> Result<AdminUser, DomainError>;
 }
 
-pub trait PasswordVerifier: Send + Sync
-{
+pub trait PasswordVerifier: Send + Sync {
     fn verify(&self, plain: &str, hash: &str) -> Result<bool, DomainError>;
 }
 
-pub trait NotificationSender: Send + Sync
-{
+pub trait NotificationSender: Send + Sync {
     /// Sends a notification about a new order. Implementations are expected
     /// to be synchronous (may block on IO). Async dispatch is the caller's
     /// responsibility.
@@ -81,8 +74,7 @@ pub trait NotificationSender: Send + Sync
 /// must ensure final writes are atomic (temp file + rename) and must
 /// refuse any path that escapes the configured root.
 #[async_trait::async_trait]
-pub trait FileStorage: Send + Sync
-{
+pub trait FileStorage: Send + Sync {
     /// Delete a stored file by its canonical name. Missing files must
     /// be treated as success to keep DB and disk eventually consistent.
     async fn delete(&self, stored_filename: &str) -> Result<(), DomainError>;

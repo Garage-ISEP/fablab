@@ -15,24 +15,20 @@ use tower_sessions::Session;
 /// - not authenticated -> redirect to /admin/login
 /// - authenticated but not admin -> redirect to /
 /// - admin -> pass through
-pub async fn admin_page_guard(session: Session, request: Request, next: Next) -> Response
-{
-    if *request.method() != Method::GET
-    {
+pub async fn admin_page_guard(session: Session, request: Request, next: Next) -> Response {
+    if *request.method() != Method::GET {
         return next.run(request).await;
     }
 
     let path = request.uri().path();
-    let is_admin_page = path == "/admin"
-        || (path.starts_with("/admin/") && !path.starts_with("/admin/login"));
-    if !is_admin_page
-    {
+    let is_admin_page =
+        path == "/admin" || (path.starts_with("/admin/") && !path.starts_with("/admin/login"));
+    if !is_admin_page {
         return next.run(request).await;
     }
 
     let role: Option<String> = session.get("role").await.ok().flatten();
-    match role.as_deref()
-    {
+    match role.as_deref() {
         Some("admin") => next.run(request).await,
         Some(_) => Redirect::to("/").into_response(),
         None => Redirect::to("/admin/login").into_response(),

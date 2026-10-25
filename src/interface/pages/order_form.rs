@@ -6,12 +6,10 @@ use crate::interface::components::flash_message::FlashMessage;
 use crate::interface::session_helpers::get_csrf_token;
 
 #[server]
-pub async fn fetch_available_materials() -> Result<Vec<Material>, ServerFnError>
-{
+pub async fn fetch_available_materials() -> Result<Vec<Material>, ServerFnError> {
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
     let list_materials = state.list_materials.clone();
-    tokio::task::spawn_blocking(move ||
-    {
+    tokio::task::spawn_blocking(move || {
         list_materials
             .execute(true)
             .map_err(|e| ServerFnError::new(format!("{e}")))
@@ -21,21 +19,18 @@ pub async fn fetch_available_materials() -> Result<Vec<Material>, ServerFnError>
 }
 
 #[server]
-pub async fn fetch_user_phone() -> Result<Option<String>, ServerFnError>
-{
+pub async fn fetch_user_phone() -> Result<Option<String>, ServerFnError> {
     use crate::interface::session_helpers::extract_caller;
 
     let caller = extract_caller().await?;
-    let user_id = match caller
-    {
+    let user_id = match caller {
         crate::application::dtos::caller::Caller::Student { user_id } => user_id,
         _ => return Ok(None),
     };
 
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
     let get_user_phone = state.get_user_phone.clone();
-    tokio::task::spawn_blocking(move ||
-    {
+    tokio::task::spawn_blocking(move || {
         get_user_phone
             .execute(user_id)
             .map_err(|e| ServerFnError::new(format!("{e}")))
@@ -45,8 +40,7 @@ pub async fn fetch_user_phone() -> Result<Option<String>, ServerFnError>
 }
 
 #[server]
-pub async fn fetch_form_bootstrap()
-    -> Result<(Vec<Material>, Option<String>, String), ServerFnError>
+pub async fn fetch_form_bootstrap() -> Result<(Vec<Material>, Option<String>, String), ServerFnError>
 {
     let materials = fetch_available_materials().await?;
     let phone = fetch_user_phone().await?;
@@ -55,12 +49,10 @@ pub async fn fetch_form_bootstrap()
 }
 
 #[component]
-pub fn OrderFormPage() -> impl IntoView
-{
+pub fn OrderFormPage() -> impl IntoView {
     let bootstrap = Resource::new(|| (), |_| fetch_form_bootstrap());
 
-    view!
-    {
+    view! {
         <div class="page-card">
             <div class="page-header">
                 <h1>"Nouvelle commande"</h1>

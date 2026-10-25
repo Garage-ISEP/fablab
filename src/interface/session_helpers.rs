@@ -3,8 +3,7 @@ use tower_sessions::Session;
 
 use crate::application::dtos::caller::Caller;
 
-pub async fn extract_caller() -> Result<Caller, ServerFnError>
-{
+pub async fn extract_caller() -> Result<Caller, ServerFnError> {
     let session: Session = leptos_axum::extract().await?;
 
     let role: Option<String> = session
@@ -12,11 +11,9 @@ pub async fn extract_caller() -> Result<Caller, ServerFnError>
         .await
         .map_err(|e| ServerFnError::new(format!("{e}")))?;
 
-    match role.as_deref()
-    {
+    match role.as_deref() {
         Some("admin") => Ok(Caller::Admin),
-        Some("student") =>
-        {
+        Some("student") => {
             let user_id: i64 = session
                 .get("user_id")
                 .await
@@ -28,28 +25,23 @@ pub async fn extract_caller() -> Result<Caller, ServerFnError>
     }
 }
 
-pub async fn extract_admin_caller() -> Result<Caller, ServerFnError>
-{
+pub async fn extract_admin_caller() -> Result<Caller, ServerFnError> {
     let caller = extract_caller().await?;
-    if !caller.is_admin()
-    {
+    if !caller.is_admin() {
         return Err(ServerFnError::new("non autorise"));
     }
     Ok(caller)
 }
 
-pub async fn extract_student_caller() -> Result<Caller, ServerFnError>
-{
+pub async fn extract_student_caller() -> Result<Caller, ServerFnError> {
     let caller = extract_caller().await?;
-    match caller
-    {
+    match caller {
         Caller::Student { .. } => Ok(caller),
         Caller::Admin => Err(ServerFnError::new("non autorise")),
     }
 }
 
-pub async fn get_csrf_token() -> Result<String, ServerFnError>
-{
+pub async fn get_csrf_token() -> Result<String, ServerFnError> {
     let session: Session = leptos_axum::extract().await?;
     crate::interface::csrf::ensure_csrf_token(&session)
         .await

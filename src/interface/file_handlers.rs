@@ -18,8 +18,7 @@ use crate::interface::routes::AppState;
 /// Fields captured from the multipart body while streaming. File parts
 /// are handled inline (streamed to storage) and never buffered here.
 #[derive(Default)]
-struct OrderFormFields
-{
+struct OrderFormFields {
     csrf: Option<String>,
     software_used: Option<String>,
     material_id: Option<String>,
@@ -46,15 +45,12 @@ pub async fn upload_order_handler(
     State(state): State<AppState>,
     session: Session,
     request: Request,
-) -> Response
-{
-    let caller = match resolve_student_caller(&session).await
-    {
+) -> Response {
+    let caller = match resolve_student_caller(&session).await {
         Ok(c) => c,
         Err(r) => return r,
     };
-    let user_id = match caller
-    {
+    let user_id = match caller {
         Caller::Student { user_id } => user_id,
         Caller::Admin => return (StatusCode::FORBIDDEN, "non autorise").into_response(),
     };
@@ -66,13 +62,14 @@ pub async fn upload_order_handler(
         .map(|s| s.to_owned())
         .unwrap_or_default();
 
-    let boundary = match multer::parse_boundary(&content_type)
-    {
+    let boundary = match multer::parse_boundary(&content_type) {
         Ok(b) => b,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid content-type").into_response(),
     };
 
-    let body_stream = request.into_body().into_data_stream()
+    let body_stream = request
+        .into_body()
+        .into_data_stream()
         .map(|r| r.map_err(std::io::Error::other));
     let mut multipart = multer::Multipart::new(body_stream, boundary);
 
@@ -85,20 +82,16 @@ pub async fn upload_order_handler(
     // body. Browsers (notably Firefox) reset the connection if we send
     // a response while they are still pushing body bytes, so we must
     // consume the entire multipart even on error before responding.
-    enum HandlerError
-    {
+    enum HandlerError {
         Status(StatusCode, &'static str),
         Flash(String),
     }
     let mut deferred_error: Option<HandlerError> = None;
 
-    'outer: while let Some(field_res) = multipart.next_field().await.transpose()
-    {
-        let mut field = match field_res
-        {
+    'outer: while let Some(field_res) = multipart.next_field().await.transpose() {
+        let mut field = match field_res {
             Ok(f) => f,
-            Err(e) =>
-            {
+            Err(e) => {
                 eprintln!("upload: multipart parse error: {e}");
                 deferred_error = Some(HandlerError::Flash("Envoi invalide.".to_owned()));
                 break 'outer;
@@ -107,48 +100,46 @@ pub async fn upload_order_handler(
 
         let name = field.name().unwrap_or("").to_owned();
 
-        match name.as_str()
-        {
-            "_csrf" =>
-            {
-                let v = match read_text_field(&mut field).await
-                {
+        match name.as_str() {
+            "_csrf" => {
+                let v = match read_text_field(&mut field).await {
                     Ok(v) => v,
-                    Err(_) =>
-                    {
+                    Err(_) => {
                         deferred_error = Some(HandlerError::Status(
-                            StatusCode::BAD_REQUEST, "invalid field"));
+                            StatusCode::BAD_REQUEST,
+                            "invalid field",
+                        ));
                         break 'outer;
                     }
                 };
-                if !validate_csrf_token(&session, &v).await
-                {
+                if !validate_csrf_token(&session, &v).await {
                     deferred_error = Some(HandlerError::Status(
-                        StatusCode::FORBIDDEN, "Invalid CSRF token"));
+                        StatusCode::FORBIDDEN,
+                        "Invalid CSRF token",
+                    ));
                     break 'outer;
                 }
                 fields.csrf = Some(v);
             }
-            "software_used" | "material_id" | "quantity" | "comments" | "phone" =>
-            {
-                if fields.csrf.is_none()
-                {
+            "software_used" | "material_id" | "quantity" | "comments" | "phone" => {
+                if fields.csrf.is_none() {
                     deferred_error = Some(HandlerError::Status(
-                        StatusCode::FORBIDDEN, "Invalid CSRF token"));
+                        StatusCode::FORBIDDEN,
+                        "Invalid CSRF token",
+                    ));
                     break 'outer;
                 }
-                let v = match read_text_field(&mut field).await
-                {
+                let v = match read_text_field(&mut field).await {
                     Ok(v) => v,
-                    Err(_) =>
-                    {
+                    Err(_) => {
                         deferred_error = Some(HandlerError::Status(
-                            StatusCode::BAD_REQUEST, "invalid field"));
+                            StatusCode::BAD_REQUEST,
+                            "invalid field",
+                        ));
                         break 'outer;
                     }
                 };
-                match name.as_str()
-                {
+                match name.as_str() {
                     "software_used" => fields.software_used = Some(v),
                     "material_id" => fields.material_id = Some(v),
                     "quantity" => fields.quantity = Some(v),
@@ -157,12 +148,12 @@ pub async fn upload_order_handler(
                     _ => {}
                 }
             }
-            "files" =>
-            {
-                if fields.csrf.is_none()
-                {
+            "files" => {
+                if fields.csrf.is_none() {
                     deferred_error = Some(HandlerError::Status(
-                        StatusCode::FORBIDDEN, "Invalid CSRF token"));
+                        StatusCode::FORBIDDEN,
+                        "Invalid CSRF token",
+                    ));
                     break 'outer;
                 }
 
@@ -170,22 +161,18 @@ pub async fn upload_order_handler(
                 // the file inputs. If we see a file before
                 // software_used is known, the form was tampered with
                 // or built wrong.
-                if fields.software_used.is_none()
-                {
+                if fields.software_used.is_none() {
                     deferred_error = Some(HandlerError::Flash(
-                        "Formulaire invalide. Veuillez recharger la page.".to_owned()));
+                        "Formulaire invalide. Veuillez recharger la page.".to_owned(),
+                    ));
                     break 'outer;
                 }
 
-                if order_id.is_none()
-                {
-                    let oid = match create_order_from_fields(&state, user_id, &fields)
-                    {
+                if order_id.is_none() {
+                    let oid = match create_order_from_fields(&state, user_id, &fields) {
                         Ok(id) => id,
-                        Err(e) =>
-                        {
-                            deferred_error = Some(HandlerError::Flash(
-                                user_message(&e).to_owned()));
+                        Err(e) => {
+                            deferred_error = Some(HandlerError::Flash(user_message(&e).to_owned()));
                             break 'outer;
                         }
                     };
@@ -194,30 +181,28 @@ pub async fn upload_order_handler(
                 let oid = order_id.expect("order_id just set");
 
                 let raw_name = field.file_name().unwrap_or("").to_owned();
-                if raw_name.trim().is_empty()
-                {
+                if raw_name.trim().is_empty() {
                     continue;
                 }
 
                 let mapped = field.map(|r| r.map_err(std::io::Error::other));
                 let mut reader = tokio_util::io::StreamReader::new(mapped);
-                let res = state.upload_order_file
+                let res = state
+                    .upload_order_file
                     .execute(oid, user_id, &raw_name, &mut reader)
                     .await;
 
-                match res
-                {
-                    Ok(_) => { any_file_uploaded = true; }
-                    Err(e) =>
-                    {
-                        deferred_error = Some(HandlerError::Flash(
-                            user_message(&e).to_owned()));
+                match res {
+                    Ok(_) => {
+                        any_file_uploaded = true;
+                    }
+                    Err(e) => {
+                        deferred_error = Some(HandlerError::Flash(user_message(&e).to_owned()));
                         break 'outer;
                     }
                 }
             }
-            _ =>
-            {
+            _ => {
                 // Unknown field: read and discard so we keep the body
                 // stream advancing.
                 let _ = read_text_field(&mut field).await;
@@ -227,62 +212,52 @@ pub async fn upload_order_handler(
 
     // Drain anything the client is still trying to send before we
     // respond. This avoids the "connection reset" error in Firefox.
-    while let Ok(Some(mut field)) = multipart.next_field().await
-    {
-        while let Ok(Some(_)) = field.chunk().await
-        {
+    while let Ok(Some(mut field)) = multipart.next_field().await {
+        while let Ok(Some(_)) = field.chunk().await {
             // discard
         }
     }
 
-    if let Some(err) = deferred_error
-    {
-        if let Some(oid) = order_id
-        {
+    if let Some(err) = deferred_error {
+        if let Some(oid) = order_id {
             let _ = cancel_uc.execute(oid).await;
         }
-        return match err
-        {
+        return match err {
             HandlerError::Status(code, msg) => (code, msg).into_response(),
-            HandlerError::Flash(msg) =>
-                flash_and_redirect(&session, FlashLevel::Error, &msg, "/order/new").await,
+            HandlerError::Flash(msg) => {
+                flash_and_redirect(&session, FlashLevel::Error, &msg, "/order/new").await
+            }
         };
     }
 
-    let oid = match order_id
-    {
+    let oid = match order_id {
         Some(o) => o,
-        None =>
-        {
+        None => {
             return flash_and_redirect(
                 &session,
                 FlashLevel::Error,
                 "Veuillez joindre au moins un fichier.",
                 "/order/new",
-            ).await;
+            )
+            .await;
         }
     };
 
-    if !any_file_uploaded
-    {
+    if !any_file_uploaded {
         let _ = cancel_uc.execute(oid).await;
         return flash_and_redirect(
             &session,
             FlashLevel::Error,
             "Veuillez joindre au moins un fichier.",
             "/order/new",
-        ).await;
+        )
+        .await;
     }
 
     let notify_uc = state.notify_new_order.clone();
-    tokio::spawn(async move
-    {
-        let result = tokio::task::spawn_blocking(move ||
-        {
-            notify_uc.execute(oid)
-        }).await;
-        match result
-        {
+    tokio::spawn(async move {
+        let result = tokio::task::spawn_blocking(move || notify_uc.execute(oid)).await;
+        match result {
             Ok(Ok(())) => {}
             Ok(Err(e)) => eprintln!("notify new order failed: {e}"),
             Err(e) => eprintln!("notify task panicked: {e}"),
@@ -294,29 +269,33 @@ pub async fn upload_order_handler(
         FlashLevel::Success,
         "Commande envoyee. L'equipe a ete notifiee.",
         "/my-orders",
-    ).await
+    )
+    .await
 }
 
 fn create_order_from_fields(
     state: &AppState,
     user_id: i64,
     fields: &OrderFormFields,
-) -> Result<i64, AppError>
-{
+) -> Result<i64, AppError> {
     let software_used = fields.software_used.clone().unwrap_or_default();
-    let material_id = match fields.material_id.as_deref().unwrap_or("")
-    {
+    let material_id = match fields.material_id.as_deref().unwrap_or("") {
         "" => None,
-        s => Some(s.parse::<i64>()
-            .map_err(|_| AppError::InvalidInput("material_id invalid".to_owned()))?),
+        s => Some(
+            s.parse::<i64>()
+                .map_err(|_| AppError::InvalidInput("material_id invalid".to_owned()))?,
+        ),
     };
-    let quantity = fields.quantity.as_deref().unwrap_or("1")
-        .parse::<i32>().unwrap_or(1);
+    let quantity = fields
+        .quantity
+        .as_deref()
+        .unwrap_or("1")
+        .parse::<i32>()
+        .unwrap_or(1);
     let comments = fields.comments.clone().filter(|s| !s.is_empty());
     let phone = fields.phone.clone().filter(|s| !s.is_empty());
 
-    let input = SubmitOrderInput
-    {
+    let input = SubmitOrderInput {
         user_id,
         software_used,
         material_id,
@@ -335,23 +314,19 @@ pub async fn download_file_handler(
     State(state): State<AppState>,
     session: Session,
     Path(file_id): Path<i64>,
-) -> Response
-{
+) -> Response {
     let role: Option<String> = session.get("role").await.ok().flatten();
-    
-    if role.as_deref() != Some("admin") 
-    {
+
+    if role.as_deref() != Some("admin") {
         return (StatusCode::FORBIDDEN, "Accès réservé aux administrateurs").into_response();
     }
 
-    let file = match state.download_order_file.authorize(file_id, true, None)
-    {
+    let file = match state.download_order_file.authorize(file_id, true, None) {
         Ok(f) => f,
         Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
     };
 
-    let fh = match state.storage.open_for_read(&file.stored_filename).await
-    {
+    let fh = match state.storage.open_for_read(&file.stored_filename).await {
         Ok(f) => f,
         Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
     };
@@ -381,14 +356,13 @@ pub async fn download_file_handler(
         .header(header::CACHE_CONTROL, "private, no-store, max-age=0")
         .header("Pragma", "no-cache");
 
-    if let Some(size) = disk_size
-    {
+    if let Some(size) = disk_size {
         builder = builder.header(header::CONTENT_LENGTH, size.to_string());
     }
 
-    builder.body(body)
-        .unwrap_or_else(|_|
-            (StatusCode::INTERNAL_SERVER_ERROR, "response error").into_response())
+    builder
+        .body(body)
+        .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "response error").into_response())
 }
 
 /// POST /admin/files/:id/delete -- admin only.
@@ -396,30 +370,26 @@ pub async fn delete_file_handler(
     State(state): State<AppState>,
     session: Session,
     Path(file_id): Path<i64>,
-) -> Response
-{
+) -> Response {
     let role: Option<String> = session.get("role").await.ok().flatten();
     let is_admin = role.as_deref() == Some("admin");
-    if !is_admin
-    {
+    if !is_admin {
         return (StatusCode::FORBIDDEN, "non autorise").into_response();
     }
 
     // Resolve the order id before deletion so we can redirect the admin
     // back to the order edit page.
-    let order_id = state.download_order_file
+    let order_id = state
+        .download_order_file
         .authorize(file_id, true, None)
         .ok()
         .map(|f| f.order_id);
 
-    match state.delete_order_file.execute(file_id, true).await
-    {
-        Ok(()) =>
-        {
+    match state.delete_order_file.execute(file_id, true).await {
+        Ok(()) => {
             let _ = set_flash(&session, FlashLevel::Success, "Fichier supprime.").await;
         }
-        Err(e) =>
-        {
+        Err(e) => {
             let _ = set_flash(&session, FlashLevel::Error, user_message(&e)).await;
         }
     }
@@ -435,24 +405,19 @@ pub async fn student_cancel_order_handler(
     State(state): State<AppState>,
     session: Session,
     Path(order_id): Path<i64>,
-) -> Response
-{
+) -> Response {
     let user_id: Option<i64> = session.get("user_id").await.ok().flatten();
     let role: Option<String> = session.get("role").await.ok().flatten();
-    let user_id = match (role.as_deref(), user_id)
-    {
+    let user_id = match (role.as_deref(), user_id) {
         (Some("student"), Some(uid)) => uid,
         _ => return (StatusCode::FORBIDDEN, "non autorise").into_response(),
     };
 
-    match state.student_cancel_order.execute(order_id, user_id).await
-    {
-        Ok(()) =>
-        {
+    match state.student_cancel_order.execute(order_id, user_id).await {
+        Ok(()) => {
             let _ = set_flash(&session, FlashLevel::Success, "Commande annulee.").await;
         }
-        Err(e) =>
-        {
+        Err(e) => {
             let _ = set_flash(&session, FlashLevel::Error, user_message(&e)).await;
         }
     }
@@ -464,22 +429,17 @@ pub async fn admin_delete_order_handler(
     State(state): State<AppState>,
     session: Session,
     Path(order_id): Path<i64>,
-) -> Response
-{
+) -> Response {
     let role: Option<String> = session.get("role").await.ok().flatten();
-    if role.as_deref() != Some("admin")
-    {
+    if role.as_deref() != Some("admin") {
         return (StatusCode::FORBIDDEN, "non autorise").into_response();
     }
 
-    match state.admin_delete_order.execute(order_id, true).await
-    {
-        Ok(()) =>
-        {
+    match state.admin_delete_order.execute(order_id, true).await {
+        Ok(()) => {
             let _ = set_flash(&session, FlashLevel::Success, "Commande supprimee.").await;
         }
-        Err(e) =>
-        {
+        Err(e) => {
             let _ = set_flash(&session, FlashLevel::Error, user_message(&e)).await;
         }
     }
@@ -492,48 +452,39 @@ pub async fn admin_delete_material_handler(
     State(state): State<AppState>,
     session: Session,
     Path(material_id): Path<i64>,
-) -> Response
-{
+) -> Response {
     let role: Option<String> = session.get("role").await.ok().flatten();
-    if role.as_deref() != Some("admin")
-    {
+    if role.as_deref() != Some("admin") {
         return (StatusCode::FORBIDDEN, "non autorise").into_response();
     }
 
     let manage_material = state.manage_material.clone();
-    let result = tokio::task::spawn_blocking(move ||
-    {
-        manage_material.delete(material_id)
-    })
-    .await;
+    let result = tokio::task::spawn_blocking(move || manage_material.delete(material_id)).await;
 
-    match result
-    {
-        Ok(Ok(())) =>
-        {
+    match result {
+        Ok(Ok(())) => {
             let _ = set_flash(&session, FlashLevel::Success, "Materiau supprime.").await;
         }
-        Ok(Err(e)) =>
-        {
+        Ok(Err(e)) => {
             let _ = set_flash(&session, FlashLevel::Error, user_message(&e)).await;
         }
-        Err(_) =>
-        {
+        Err(_) => {
             let _ = set_flash(&session, FlashLevel::Error, "Erreur interne.").await;
         }
     }
     Redirect::to("/admin/materials").into_response()
 }
 
-async fn resolve_student_caller(session: &Session) -> Result<Caller, Response>
-{
-    let role: Option<String> = session.get("role").await
+async fn resolve_student_caller(session: &Session) -> Result<Caller, Response> {
+    let role: Option<String> = session
+        .get("role")
+        .await
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "session").into_response())?;
-    match role.as_deref()
-    {
-        Some("student") =>
-        {
-            let user_id: i64 = session.get("user_id").await
+    match role.as_deref() {
+        Some("student") => {
+            let user_id: i64 = session
+                .get("user_id")
+                .await
                 .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "session").into_response())?
                 .ok_or_else(|| (StatusCode::UNAUTHORIZED, "unauth").into_response())?;
             Ok(Caller::Student { user_id })
@@ -547,26 +498,18 @@ async fn flash_and_redirect(
     level: FlashLevel,
     msg: &str,
     target: &str,
-) -> Response
-{
+) -> Response {
     let _ = set_flash(session, level, msg).await;
     Redirect::to(target).into_response()
 }
 
-async fn read_text_field(
-    field: &mut multer::Field<'_>,
-) -> Result<String, String>
-{
+async fn read_text_field(field: &mut multer::Field<'_>) -> Result<String, String> {
     const MAX: usize = 8 * 1024;
     let mut buf: Vec<u8> = Vec::with_capacity(128);
-    loop
-    {
-        match field.chunk().await
-        {
-            Ok(Some(chunk)) =>
-            {
-                if buf.len().saturating_add(chunk.len()) > MAX
-                {
+    loop {
+        match field.chunk().await {
+            Ok(Some(chunk)) => {
+                if buf.len().saturating_add(chunk.len()) > MAX {
                     return Err("text field too large".to_owned());
                 }
                 buf.extend_from_slice(&chunk);
@@ -580,20 +523,15 @@ async fn read_text_field(
 
 /// Minimal RFC 3986 percent-encoding for Content-Disposition filename*.
 /// Unreserved chars are kept; everything else becomes %XX.
-fn percent_encode(s: &str) -> String
-{
+fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    for b in s.as_bytes()
-    {
+    for b in s.as_bytes() {
         let c = *b;
-        let unreserved = c.is_ascii_alphanumeric()
-            || c == b'-' || c == b'_' || c == b'.' || c == b'~';
-        if unreserved
-        {
+        let unreserved =
+            c.is_ascii_alphanumeric() || c == b'-' || c == b'_' || c == b'.' || c == b'~';
+        if unreserved {
             out.push(c as char);
-        }
-        else
-        {
+        } else {
             use std::fmt::Write;
             let _ = write!(out, "%{c:02X}");
         }

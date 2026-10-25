@@ -1,11 +1,10 @@
+use argon2::Argon2;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use argon2::Argon2;
 
 use crate::domain::errors::DomainError;
 
-pub fn hash_password(plain: &str) -> Result<String, DomainError>
-{
+pub fn hash_password(plain: &str) -> Result<String, DomainError> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
 
@@ -18,10 +17,8 @@ pub fn hash_password(plain: &str) -> Result<String, DomainError>
 
 pub struct Argon2PasswordVerifier;
 
-impl crate::domain::repositories::PasswordVerifier for Argon2PasswordVerifier
-{
-    fn verify(&self, plain: &str, hash: &str) -> Result<bool, DomainError>
-    {
+impl crate::domain::repositories::PasswordVerifier for Argon2PasswordVerifier {
+    fn verify(&self, plain: &str, hash: &str) -> Result<bool, DomainError> {
         let parsed = PasswordHash::new(hash)
             .map_err(|e| DomainError::Validation(format!("invalid hash format: {e}")))?;
 

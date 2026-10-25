@@ -5,19 +5,15 @@ use crate::domain::order::Order;
 use crate::domain::order_file::OrderFile;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct OrderFileView
-{
+pub struct OrderFileView {
     pub id: i64,
     pub original_filename: String,
     pub size_bytes: i64,
 }
 
-impl OrderFileView
-{
-    pub fn from_file(f: &OrderFile) -> Self
-    {
-        Self
-        {
+impl OrderFileView {
+    pub fn from_file(f: &OrderFile) -> Self {
+        Self {
             id: f.id,
             original_filename: f.original_filename.clone(),
             size_bytes: f.size_bytes,
@@ -26,8 +22,7 @@ impl OrderFileView
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct OrderView
-{
+pub struct OrderView {
     pub id: i64,
     pub user_id: i64,
     pub user_display_name: String,
@@ -44,17 +39,14 @@ pub struct OrderView
     pub print_time_minutes: Option<i32>,
 }
 
-impl OrderView
-{
+impl OrderView {
     pub fn from_order(
         order: &Order,
         user_display_name: String,
         material_label: Option<String>,
         files: Vec<OrderFileView>,
-    ) -> Self
-    {
-        Self
-        {
+    ) -> Self {
+        Self {
             id: order.id,
             user_id: order.user_id,
             user_display_name,
@@ -75,8 +67,7 @@ impl OrderView
 
 /// Admin-facing material view enriched with derived stock data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MaterialView
-{
+pub struct MaterialView {
     pub id: i64,
     pub name: String,
     pub color: String,
@@ -86,20 +77,19 @@ pub struct MaterialView
     pub remaining_weight_grams: f64,
 }
 
-impl MaterialView
-{
-    pub fn from_material(material: &Material, consumed_grams: f64) -> Self
-    {
-        Self
-        {
+impl MaterialView {
+    pub fn from_material(material: &Material, consumed_grams: f64) -> Self {
+        Self {
             id: material.id,
             name: material.name.clone(),
             color: material.color.clone(),
             label: material.label(),
             available: material.available,
             spool_weight_grams: material.spool_weight_grams,
-            remaining_weight_grams:
-                crate::domain::stock::remaining_weight(material.spool_weight_grams, consumed_grams),
+            remaining_weight_grams: crate::domain::stock::remaining_weight(
+                material.spool_weight_grams,
+                consumed_grams,
+            ),
         }
     }
 }

@@ -11,8 +11,7 @@ use crate::interface::components::order_table::OrderTable;
 use crate::interface::session_helpers::extract_admin_caller;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct DashboardQuery
-{
+struct DashboardQuery {
     status: String,
     payment: String,
     search: String,
@@ -20,36 +19,25 @@ struct DashboardQuery
     sort_dir: String,
 }
 
-impl DashboardQuery
-{
-    fn to_filter(&self) -> OrderFilter
-    {
-        OrderFilter
-        {
-            status: if self.status.is_empty() || self.status == "all"
-            {
+impl DashboardQuery {
+    fn to_filter(&self) -> OrderFilter {
+        OrderFilter {
+            status: if self.status.is_empty() || self.status == "all" {
                 None
-            }
-            else
-            {
+            } else {
                 Some(self.status.clone())
             },
             payment: PaymentFilter::from_str(&self.payment).ok(),
-            search: if self.search.trim().is_empty()
-            {
+            search: if self.search.trim().is_empty() {
                 None
-            }
-            else
-            {
+            } else {
                 Some(self.search.clone())
             },
         }
     }
 
-    fn to_sort(&self) -> OrderSort
-    {
-        let column = match self.sort_col.as_str()
-        {
+    fn to_sort(&self) -> OrderSort {
+        let column = match self.sort_col.as_str() {
             "date" => SortColumn::CreatedAt,
             "client" => SortColumn::Client,
             "material" => SortColumn::Material,
@@ -60,8 +48,7 @@ impl DashboardQuery
             "time" => SortColumn::PrintTime,
             _ => SortColumn::Id,
         };
-        let direction = match self.sort_dir.as_str()
-        {
+        let direction = match self.sort_dir.as_str() {
             "asc" => SortDirection::Asc,
             _ => SortDirection::Desc,
         };
@@ -76,15 +63,19 @@ pub async fn fetch_filtered_orders(
     search: String,
     sort_col: String,
     sort_dir: String,
-) -> Result<Vec<OrderView>, ServerFnError>
-{
+) -> Result<Vec<OrderView>, ServerFnError> {
     let caller = extract_admin_caller().await?;
-    let query = DashboardQuery { status, payment, search, sort_col, sort_dir };
+    let query = DashboardQuery {
+        status,
+        payment,
+        search,
+        sort_col,
+        sort_dir,
+    };
 
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
     let list_orders = state.list_orders.clone();
-    tokio::task::spawn_blocking(move ||
-    {
+    tokio::task::spawn_blocking(move || {
         list_orders
             .execute_filtered(&caller, &query.to_filter(), query.to_sort())
             .map_err(|e| ServerFnError::new(format!("{e}")))
@@ -94,16 +85,13 @@ pub async fn fetch_filtered_orders(
 }
 
 #[component]
-pub fn AdminDashboardPage() -> impl IntoView
-{
+pub fn AdminDashboardPage() -> impl IntoView {
     let query_map = use_query_map();
 
     // Read query params reactively. On SSR each navigation re-runs this.
-    let dashboard_query = move || -> DashboardQuery
-    {
+    let dashboard_query = move || -> DashboardQuery {
         let q = query_map.get();
-        DashboardQuery
-        {
+        DashboardQuery {
             status: q.get("status").unwrap_or_default(),
             payment: q.get("payment").unwrap_or_default(),
             search: q.get("q").unwrap_or_default(),
@@ -113,15 +101,11 @@ pub fn AdminDashboardPage() -> impl IntoView
     };
 
     // Resource keyed on the query so it re-fetches when URL changes.
-    let orders = Resource::new(
-        dashboard_query,
-        |dq| fetch_filtered_orders(
-            dq.status, dq.payment, dq.search, dq.sort_col, dq.sort_dir,
-        ),
-    );
+    let orders = Resource::new(dashboard_query, |dq| {
+        fetch_filtered_orders(dq.status, dq.payment, dq.search, dq.sort_col, dq.sort_dir)
+    });
 
-    view!
-    {
+    view! {
         <div class="page-card">
             <div class="page-header">
                 <h1>"Commandes"</h1>
@@ -192,34 +176,26 @@ pub fn AdminDashboardPage() -> impl IntoView
 
 /// Builds a base URL preserving filters but stripping sort params.
 /// The OrderTable will append &sort=...&dir=... per column.
-fn build_base_url(dq: &DashboardQuery) -> String
-{
+fn build_base_url(dq: &DashboardQuery) -> String {
     let mut parts: Vec<String> = Vec::new();
-    if !dq.status.is_empty() && dq.status != "all"
-    {
+    if !dq.status.is_empty() && dq.status != "all" {
         parts.push(format!("status={}", urlencoding::encode(&dq.status)));
     }
-    if !dq.payment.is_empty()
-    {
+    if !dq.payment.is_empty() {
         parts.push(format!("payment={}", urlencoding::encode(&dq.payment)));
     }
-    if !dq.search.is_empty()
-    {
+    if !dq.search.is_empty() {
         parts.push(format!("q={}", urlencoding::encode(&dq.search)));
     }
-    if parts.is_empty()
-    {
+    if parts.is_empty() {
         "/admin".to_owned()
-    }
-    else
-    {
+    } else {
         format!("/admin?{}", parts.join("&"))
     }
 }
 
 #[component]
-fn FilterForm(query: DashboardQuery) -> impl IntoView
-{
+fn FilterForm(query: DashboardQuery) -> impl IntoView {
     let status = query.status.clone();
     let payment = query.payment.clone();
     let search = query.search.clone();
@@ -229,8 +205,7 @@ fn FilterForm(query: DashboardQuery) -> impl IntoView
     let is_status = move |v: &str| status == v;
     let is_payment = move |v: &str| payment == v;
 
-    view!
-    {
+    view! {
         <form method="get" action="/admin" class="filters">
             <div class="filter-group">
                 <label for="status-filter">"Statut"</label>

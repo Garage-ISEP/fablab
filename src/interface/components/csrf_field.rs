@@ -1,18 +1,15 @@
 use leptos::prelude::*;
 
 #[server]
-pub async fn fetch_csrf_token() -> Result<String, ServerFnError>
-{
+pub async fn fetch_csrf_token() -> Result<String, ServerFnError> {
     crate::interface::session_helpers::get_csrf_token().await
 }
 
 #[component]
-pub fn CsrfField() -> impl IntoView
-{
+pub fn CsrfField() -> impl IntoView {
     let token = Resource::new(|| (), |_| fetch_csrf_token());
 
-    view!
-    {
+    view! {
         <Suspense fallback=|| view! { <input type="hidden" name="_csrf" value="" /> }>
             {move ||
             {

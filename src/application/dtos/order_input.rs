@@ -3,8 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::application::errors::AppError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubmitOrderInput
-{
+pub struct SubmitOrderInput {
     pub user_id: i64,
     pub software_used: String,
     pub material_id: Option<i64>,
@@ -14,8 +13,7 @@ pub struct SubmitOrderInput
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateOrderInput
-{
+pub struct UpdateOrderInput {
     pub order_id: i64,
     pub status: Option<String>,
     pub requires_payment: Option<bool>,
@@ -24,20 +22,15 @@ pub struct UpdateOrderInput
     pub material_id: Option<i64>,
 }
 
-impl UpdateOrderInput
-{
-    pub fn validate(&self) -> Result<(), AppError>
-    {
-        if let Some(w) = self.sliced_weight_grams
-        {
-            if !w.is_finite()
-            {
+impl UpdateOrderInput {
+    pub fn validate(&self) -> Result<(), AppError> {
+        if let Some(w) = self.sliced_weight_grams {
+            if !w.is_finite() {
                 return Err(AppError::InvalidInput(
                     "weight must be a finite number".to_owned(),
                 ));
             }
-            if w < 0.0
-            {
+            if w < 0.0 {
                 return Err(AppError::InvalidInput("weight must be >= 0".to_owned()));
             }
         }
@@ -49,7 +42,9 @@ impl UpdateOrderInput
         if let Some(mid) = self.material_id
             && mid <= 0
         {
-            return Err(AppError::InvalidInput("material_id must be positive".to_owned()));
+            return Err(AppError::InvalidInput(
+                "material_id must be positive".to_owned(),
+            ));
         }
         Ok(())
     }

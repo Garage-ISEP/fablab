@@ -6,14 +6,12 @@ use crate::interface::components::status_badge::StatusBadge;
 use crate::interface::session_helpers::extract_student_caller;
 
 #[server]
-pub async fn fetch_my_order_detail(order_id: i64) -> Result<OrderView, ServerFnError>
-{
+pub async fn fetch_my_order_detail(order_id: i64) -> Result<OrderView, ServerFnError> {
     let caller = extract_student_caller().await?;
 
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
     let get_order = state.get_order.clone();
-    tokio::task::spawn_blocking(move ||
-    {
+    tokio::task::spawn_blocking(move || {
         get_order
             .execute(order_id, &caller)
             .map_err(|e| ServerFnError::new(format!("{e}")))
@@ -23,20 +21,19 @@ pub async fn fetch_my_order_detail(order_id: i64) -> Result<OrderView, ServerFnE
 }
 
 #[component]
-pub fn MyOrderDetailPage() -> impl IntoView
-{
+pub fn MyOrderDetailPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
-    let order_id = move ||
-    {
-        params.get().get("id")
+    let order_id = move || {
+        params
+            .get()
+            .get("id")
             .and_then(|s| s.parse::<i64>().ok())
             .unwrap_or(0)
     };
 
     let order = Resource::new(order_id, fetch_my_order_detail);
 
-    view!
-    {
+    view! {
         <div class="page-card">
             <FlashMessage />
             <Suspense fallback=|| view! { <p class="loading">"Chargement..."</p> }>
@@ -65,8 +62,7 @@ pub fn MyOrderDetailPage() -> impl IntoView
     }
 }
 
-fn render_student_order_detail(o: OrderView) -> impl IntoView
-{
+fn render_student_order_detail(o: OrderView) -> impl IntoView {
     use crate::interface::components::csrf_field::CsrfField;
 
     let files = o.files.clone();
@@ -79,17 +75,13 @@ fn render_student_order_detail(o: OrderView) -> impl IntoView
     let comments_val = o.comments.clone().unwrap_or_else(|| "-".to_owned());
     let software = o.software_used.clone();
     let date = o.created_at.clone();
-    let req_label = if o.requires_payment
-    {
+    let req_label = if o.requires_payment {
         "Oui (l'admin vous contactera par email)"
-    }
-    else
-    {
+    } else {
         "Non"
     };
 
-    view!
-    {
+    view! {
         <div class="page-header">
             <h1>"Commande #"{o.id}</h1>
             <a href="/my-orders" class="btn">"Mes commandes"</a>

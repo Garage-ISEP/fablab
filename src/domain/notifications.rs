@@ -1,16 +1,14 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NotifiedFile
-{
+pub struct NotifiedFile {
     pub file_id: i64,
     pub original_filename: String,
     pub size_bytes: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrderNotification
-{
+pub struct OrderNotification {
     pub order_id: i64,
     pub created_at: String,
     pub user_display_name: String,

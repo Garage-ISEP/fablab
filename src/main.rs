@@ -16,11 +16,9 @@ use fablab::application::use_cases::list_materials::ListMaterialsUseCase;
 use fablab::application::use_cases::list_orders::ListOrdersUseCase;
 use fablab::application::use_cases::manage_material::ManageMaterialUseCase;
 use fablab::application::use_cases::notify_order::NotifyNewOrderUseCase;
-use fablab::application::use_cases::order_files::
-{
-    AdminDeleteOrderUseCase, CancelOrderUseCase, DeleteOrderFileUseCase,
-    DownloadOrderFileUseCase, PurgeOrderFilesUseCase, StudentCancelOrderUseCase,
-    UploadOrderFileUseCase,
+use fablab::application::use_cases::order_files::{
+    AdminDeleteOrderUseCase, CancelOrderUseCase, DeleteOrderFileUseCase, DownloadOrderFileUseCase,
+    PurgeOrderFilesUseCase, StudentCancelOrderUseCase, UploadOrderFileUseCase,
 };
 use fablab::application::use_cases::submit_order::SubmitOrderUseCase;
 use fablab::application::use_cases::update_order::UpdateOrderUseCase;
@@ -45,8 +43,7 @@ use fablab::interface::csrf::csrf_middleware;
 use fablab::interface::routes::{AppState, AppStateParams, build_router};
 use fablab::interface::security_headers::security_headers_middleware;
 
-struct Config
-{
+struct Config {
     database_url: String,
     cas_base_url: String,
     cas_service_url: String,
@@ -54,38 +51,31 @@ struct Config
     app_base_url: String,
 }
 
-fn load_config() -> Config
-{
+fn load_config() -> Config {
     let mut errors: Vec<&'static str> = Vec::new();
 
-    let database_url = env::var("DATABASE_URL").unwrap_or_else(|_|
-    {
+    let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
         errors.push("DATABASE_URL");
         String::new()
     });
-    let cas_base_url = env::var("CAS_BASE_URL").unwrap_or_else(|_|
-    {
+    let cas_base_url = env::var("CAS_BASE_URL").unwrap_or_else(|_| {
         errors.push("CAS_BASE_URL");
         String::new()
     });
-    let cas_service_url = env::var("CAS_SERVICE_URL").unwrap_or_else(|_|
-    {
+    let cas_service_url = env::var("CAS_SERVICE_URL").unwrap_or_else(|_| {
         errors.push("CAS_SERVICE_URL");
         String::new()
     });
-    let upload_dir = env::var("UPLOAD_DIR").unwrap_or_else(|_|
-    {
+    let upload_dir = env::var("UPLOAD_DIR").unwrap_or_else(|_| {
         errors.push("UPLOAD_DIR");
         String::new()
     });
-    let app_base_url = env::var("APP_BASE_URL").unwrap_or_else(|_|
-    {
+    let app_base_url = env::var("APP_BASE_URL").unwrap_or_else(|_| {
         errors.push("APP_BASE_URL");
         String::new()
     });
 
-    if !errors.is_empty()
-    {
+    if !errors.is_empty() {
         eprintln!(
             "Error: missing required environment variables: {}",
             errors.join(", ")
@@ -93,24 +83,26 @@ fn load_config() -> Config
         process::exit(1);
     }
 
-    Config { database_url, cas_base_url, cas_service_url, upload_dir, app_base_url }
+    Config {
+        database_url,
+        cas_base_url,
+        cas_service_url,
+        upload_dir,
+        app_base_url,
+    }
 }
 
 #[tokio::main]
-async fn main()
-{
-    if let Err(e) = dotenvy::dotenv()
-    {
+async fn main() {
+    if let Err(e) = dotenvy::dotenv() {
         eprintln!("Note: no .env file loaded ({e})");
     }
 
     let config = load_config();
 
-    let email_config = match EmailConfig::from_env()
-    {
+    let email_config = match EmailConfig::from_env() {
         Ok(c) => c,
-        Err(missing) =>
-        {
+        Err(missing) => {
             eprintln!(
                 "Error: missing required email environment variables: {}",
                 missing.join(", ")
@@ -121,27 +113,22 @@ async fn main()
 
     let upload_config = UploadConfig::from_env();
 
-    let pool = match DbPool::open(&config.database_url)
-    {
+    let pool = match DbPool::open(&config.database_url) {
         Ok(p) => p,
-        Err(e) =>
-        {
+        Err(e) => {
             eprintln!("Error: failed to open database: {e}");
             process::exit(1);
         }
     };
 
-    if let Err(e) = run_migrations(&pool)
-    {
+    if let Err(e) = run_migrations(&pool) {
         eprintln!("Error: failed to run migrations: {e}");
         process::exit(1);
     }
 
-    let storage = match LocalFileStorage::initialize(&config.upload_dir, upload_config).await
-    {
+    let storage = match LocalFileStorage::initialize(&config.upload_dir, upload_config).await {
         Ok(s) => Arc::new(s),
-        Err(e) =>
-        {
+        Err(e) => {
             eprintln!("Error: failed to initialize upload storage: {e}");
             process::exit(1);
         }
@@ -153,11 +140,9 @@ async fn main()
     let material_repo = Arc::new(SqliteMaterialRepository::new(pool.clone()));
     let admin_repo = Arc::new(SqliteAdminRepository::new(pool.clone()));
 
-    let notifier = match SmtpNotificationSender::new(email_config)
-    {
+    let notifier = match SmtpNotificationSender::new(email_config) {
         Ok(s) => Arc::new(s),
-        Err(e) =>
-        {
+        Err(e) => {
             eprintln!("Error: failed to init SMTP sender: {e}");
             process::exit(1);
         }
@@ -165,11 +150,9 @@ async fn main()
 
     seed_admin(&admin_repo);
 
-    let session_store = match SqliteSessionStore::new(pool)
-    {
+    let session_store = match SqliteSessionStore::new(pool) {
         Ok(s) => s,
-        Err(e) =>
-        {
+        Err(e) => {
             eprintln!("Error: failed to create session store: {e}");
             process::exit(1);
         }
@@ -237,9 +220,7 @@ async fn main()
         Arc::clone(&order_repo),
         Arc::clone(&purge_order_files),
     ));
-    let admin_delete_order = Arc::new(AdminDeleteOrderUseCase::new(
-        Arc::clone(&cancel_order),
-    ));
+    let admin_delete_order = Arc::new(AdminDeleteOrderUseCase::new(Arc::clone(&cancel_order)));
     let notify_new_order = Arc::new(NotifyNewOrderUseCase::new(
         Arc::clone(&order_repo),
         Arc::clone(&user_repo),
@@ -255,8 +236,7 @@ async fn main()
         .site_addr(([0, 0, 0, 0], 3000))
         .build();
 
-    let state = AppState::new(AppStateParams
-    {
+    let state = AppState::new(AppStateParams {
         leptos_options,
         submit_order,
         update_order,
@@ -293,11 +273,9 @@ async fn main()
         .layer(middleware::from_fn(csrf_middleware))
         .layer(session_layer);
 
-    let listener = match tokio::net::TcpListener::bind("0.0.0.0:3000").await
-    {
+    let listener = match tokio::net::TcpListener::bind("0.0.0.0:3000").await {
         Ok(l) => l,
-        Err(e) =>
-        {
+        Err(e) => {
             eprintln!("Error: failed to bind to 0.0.0.0:3000: {e}");
             process::exit(1);
         }
@@ -305,41 +283,31 @@ async fn main()
 
     eprintln!("Listening on http://0.0.0.0:3000");
 
-    if let Err(e) = axum::serve(listener, app).await
-    {
+    if let Err(e) = axum::serve(listener, app).await {
         eprintln!("Error: server failed: {e}");
         process::exit(1);
     }
 }
 
-fn seed_admin(admin_repo: &Arc<SqliteAdminRepository>)
-{
-    let login = match env::var("ADMIN_LOGIN")
-    {
+fn seed_admin(admin_repo: &Arc<SqliteAdminRepository>) {
+    let login = match env::var("ADMIN_LOGIN") {
         Ok(v) if !v.is_empty() => v,
         _ => return,
     };
-    let password = match env::var("ADMIN_PASSWORD")
-    {
+    let password = match env::var("ADMIN_PASSWORD") {
         Ok(v) if !v.is_empty() => v,
         _ => return,
     };
 
-    match admin_repo.find_by_login(&login)
-    {
+    match admin_repo.find_by_login(&login) {
         Ok(Some(_)) => eprintln!("Admin account already exists: {login}"),
-        Ok(None) =>
-        {
-            match hash_password(&password)
-            {
-                Ok(h) => match admin_repo.create(&login, &h)
-                {
-                    Ok(_) => eprintln!("Admin account created: {login}"),
-                    Err(e) => eprintln!("Error: failed to create admin account: {e}"),
-                },
-                Err(e) => eprintln!("Error: failed to hash admin password: {e}"),
-            }
-        }
+        Ok(None) => match hash_password(&password) {
+            Ok(h) => match admin_repo.create(&login, &h) {
+                Ok(_) => eprintln!("Admin account created: {login}"),
+                Err(e) => eprintln!("Error: failed to create admin account: {e}"),
+            },
+            Err(e) => eprintln!("Error: failed to hash admin password: {e}"),
+        },
         Err(e) => eprintln!("Error: failed to check admin account: {e}"),
     }
 }

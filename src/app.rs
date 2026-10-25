@@ -13,10 +13,8 @@ use fablab::interface::pages::my_order_detail::MyOrderDetailPage;
 use fablab::interface::pages::my_orders::MyOrdersPage;
 use fablab::interface::pages::order_form::OrderFormPage;
 
-pub fn shell() -> impl IntoView
-{
-    view!
-    {
+pub fn shell() -> impl IntoView {
+    view! {
         <!DOCTYPE html>
         <html lang="fr">
             <head>
@@ -32,12 +30,10 @@ pub fn shell() -> impl IntoView
 }
 
 #[component]
-pub fn App() -> impl IntoView
-{
+pub fn App() -> impl IntoView {
     provide_meta_context();
 
-    view!
-    {
+    view! {
         <Stylesheet id="leptos" href="/style/main.css" />
         <Title text="Fablab | Garage Isep" />
         <Router>

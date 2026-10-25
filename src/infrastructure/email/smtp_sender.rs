@@ -1,6 +1,6 @@
 use lettre::message::header::ContentType;
-use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::SmtpTransport;
+use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, Transport};
 
 use crate::domain::errors::DomainError;
@@ -9,20 +9,14 @@ use crate::domain::repositories::NotificationSender;
 
 use super::config::EmailConfig;
 
-pub struct SmtpNotificationSender
-{
+pub struct SmtpNotificationSender {
     config: EmailConfig,
     transport: SmtpTransport,
 }
 
-impl SmtpNotificationSender
-{
-    pub fn new(config: EmailConfig) -> Result<Self, DomainError>
-    {
-        let creds = Credentials::new(
-            config.smtp_user.clone(),
-            config.smtp_password.clone(),
-        );
+impl SmtpNotificationSender {
+    pub fn new(config: EmailConfig) -> Result<Self, DomainError> {
+        let creds = Credentials::new(config.smtp_user.clone(), config.smtp_password.clone());
 
         let transport = SmtpTransport::relay(&config.smtp_host)
             .map_err(|e| DomainError::Validation(format!("smtp relay setup: {e}")))?
@@ -34,17 +28,22 @@ impl SmtpNotificationSender
     }
 }
 
-impl NotificationSender for SmtpNotificationSender
-{
-    fn notify_new_order(&self, n: &OrderNotification) -> Result<(), DomainError>
-    {
-        let subject = format!("Nouvelle commande #{} - {}", n.order_id, n.user_display_name);
+impl NotificationSender for SmtpNotificationSender {
+    fn notify_new_order(&self, n: &OrderNotification) -> Result<(), DomainError> {
+        let subject = format!(
+            "Nouvelle commande #{} - {}",
+            n.order_id, n.user_display_name
+        );
         let body = render_html(n);
 
-        let from = self.config.from_address
+        let from = self
+            .config
+            .from_address
             .parse()
             .map_err(|e| DomainError::Validation(format!("invalid SMTP_FROM: {e}")))?;
-        let to = self.config.admin_address
+        let to = self
+            .config
+            .admin_address
             .parse()
             .map_err(|e| DomainError::Validation(format!("invalid ADMIN_EMAIL: {e}")))?;
 
@@ -64,11 +63,9 @@ impl NotificationSender for SmtpNotificationSender
     }
 }
 
-fn escape_html(s: &str) -> String
-{
+fn escape_html(s: &str) -> String {
     s.chars()
-        .map(|c| match c
-        {
+        .map(|c| match c {
             '&' => "&amp;".to_owned(),
             '<' => "&lt;".to_owned(),
             '>' => "&gt;".to_owned(),
@@ -79,8 +76,7 @@ fn escape_html(s: &str) -> String
         .collect()
 }
 
-fn render_html(n: &OrderNotification) -> String
-{
+fn render_html(n: &OrderNotification) -> String {
     let material = n.material_label.as_deref().unwrap_or("-");
     let phone = n.user_phone.as_deref().unwrap_or("-");
     let comments = n.comments.as_deref().unwrap_or("-");
@@ -98,16 +94,13 @@ fn render_html(n: &OrderNotification) -> String
         .collect::<Vec<_>>()
         .join("");
 
-    let row = |label: &str, value: &str| -> String
-    {
-        format!
-        (
+    let row = |label: &str, value: &str| -> String {
+        format!(
             r#"<tr><td style="padding:10px 12px;background:#232327;color:#B5B5B0;font-weight:500;font-size:13px;border-bottom:1px solid #2C2C30;width:140px;">{label}</td><td style="padding:10px 12px;color:#F2F2F0;font-size:14px;border-bottom:1px solid #2C2C30;">{value}</td></tr>"#
         )
     };
 
-    format!
-    (
+    format!(
         r#"<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Nouvelle commande</title></head>
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#121212;color:#F2F2F0;margin:0;padding:24px;">
@@ -139,7 +132,8 @@ fn render_html(n: &OrderNotification) -> String
             row("Materiau", &escape_html(material)),
             row("Quantite", &n.quantity.to_string()),
             row("Commentaires", &escape_html(comments)),
-        ].join(""),
+        ]
+        .join(""),
         files = file_links_html,
     )
 }

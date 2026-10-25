@@ -16,8 +16,7 @@ use crate::application::use_cases::list_materials::ListMaterialsUseCase;
 use crate::application::use_cases::list_orders::ListOrdersUseCase;
 use crate::application::use_cases::manage_material::ManageMaterialUseCase;
 use crate::application::use_cases::notify_order::NotifyNewOrderUseCase;
-use crate::application::use_cases::order_files::
-{
+use crate::application::use_cases::order_files::{
     AdminDeleteOrderUseCase, CancelOrderUseCase, DeleteOrderFileUseCase, DownloadOrderFileUseCase,
     StudentCancelOrderUseCase, UploadOrderFileUseCase,
 };
@@ -34,8 +33,7 @@ use crate::infrastructure::db::order_repo::SqliteOrderRepository;
 use crate::infrastructure::db::user_repo::SqliteUserRepository;
 use crate::infrastructure::email::smtp_sender::SmtpNotificationSender;
 use crate::infrastructure::storage::local_fs::LocalFileStorage;
-use crate::interface::file_handlers::
-{
+use crate::interface::file_handlers::{
     admin_delete_material_handler, admin_delete_order_handler, delete_file_handler,
     download_file_handler, student_cancel_order_handler, upload_order_handler,
 };
@@ -57,8 +55,7 @@ type ConcreteGetOrder = GetOrderUseCase<
     SqliteMaterialRepository,
     SqliteOrderFileRepository,
 >;
-type ConcreteListMaterials =
-    ListMaterialsUseCase<SqliteMaterialRepository, SqliteOrderRepository>;
+type ConcreteListMaterials = ListMaterialsUseCase<SqliteMaterialRepository, SqliteOrderRepository>;
 type ConcreteManageMaterial = ManageMaterialUseCase<SqliteMaterialRepository>;
 type ConcreteUpdatePhone = UpdatePhoneUseCase<SqliteUserRepository>;
 type ConcreteGetUserPhone = GetUserPhoneUseCase<SqliteUserRepository>;
@@ -85,8 +82,7 @@ type ConcreteNotifyOrder = NotifyNewOrderUseCase<
 >;
 
 #[derive(Clone)]
-pub struct AppState
-{
+pub struct AppState {
     pub leptos_options: LeptosOptions,
     pub submit_order: Arc<ConcreteSubmitOrder>,
     pub update_order: Arc<ConcreteUpdateOrder>,
@@ -110,8 +106,7 @@ pub struct AppState
     user_repo: Arc<SqliteUserRepository>,
 }
 
-pub struct AppStateParams
-{
+pub struct AppStateParams {
     pub leptos_options: LeptosOptions,
     pub submit_order: Arc<ConcreteSubmitOrder>,
     pub update_order: Arc<ConcreteUpdateOrder>,
@@ -135,12 +130,9 @@ pub struct AppStateParams
     pub user_repo: Arc<SqliteUserRepository>,
 }
 
-impl AppState
-{
-    pub fn new(p: AppStateParams) -> Self
-    {
-        Self 
-        {
+impl AppState {
+    pub fn new(p: AppStateParams) -> Self {
+        Self {
             leptos_options: p.leptos_options,
             submit_order: p.submit_order,
             update_order: p.update_order,
@@ -166,16 +158,13 @@ impl AppState
     }
 }
 
-impl axum::extract::FromRef<AppState> for LeptosOptions
-{
-    fn from_ref(state: &AppState) -> Self
-    {
+impl axum::extract::FromRef<AppState> for LeptosOptions {
+    fn from_ref(state: &AppState) -> Self {
         state.leptos_options.clone()
     }
 }
 
-pub fn build_router<AppFn, AppIV, ShellFn, ShellIV>
-(
+pub fn build_router<AppFn, AppIV, ShellFn, ShellIV>(
     state: AppState,
     app_fn: AppFn,
     shell_fn: ShellFn,
@@ -209,8 +198,7 @@ where
         .route("/auth/cas/callback", get(cas_callback_handler))
         .route("/auth/admin/login", post(admin_login_handler))
         .route("/auth/logout", post(logout_handler))
-        .route
-        (
+        .route(
             "/orders",
             post(upload_order_handler).layer(DefaultBodyLimit::max(upload_limit)),
         )
@@ -218,46 +206,42 @@ where
         .route("/admin/files/{id}/delete", post(delete_file_handler))
         .route("/my-orders/{id}/cancel", post(student_cancel_order_handler))
         .route("/admin/order/{id}/delete", post(admin_delete_order_handler))
-        .route("/admin/materials/{id}/delete", post(admin_delete_material_handler))
+        .route(
+            "/admin/materials/{id}/delete",
+            post(admin_delete_material_handler),
+        )
         .nest_service("/style", ServeDir::new("style"))
-        .nest_service("/public", ServeDir::new("public")) 
+        .nest_service("/public", ServeDir::new("public"))
         .route_service("/favicon.ico", ServeFile::new("public/favicon.ico"))
         .leptos_routes(&state, paths, shell_with_context)
         .with_state(state)
 }
 
-async fn cas_redirect_handler(State(state): State<AppState>) -> Redirect
-{
+async fn cas_redirect_handler(State(state): State<AppState>) -> Redirect {
     let service = &state.cas_service_url;
     let url = format!("{}/login?service={}", state.cas_client.base_url(), service);
     Redirect::temporary(&url)
 }
 
 #[derive(Deserialize)]
-pub struct CasCallbackParams
-{
+pub struct CasCallbackParams {
     ticket: String,
 }
 
-async fn cas_callback_handler
-(
+async fn cas_callback_handler(
     State(state): State<AppState>,
     session: Session,
     Query(params): Query<CasCallbackParams>,
-) -> Response
-{
+) -> Response {
     let cas_client = state.cas_client.clone();
     let service_url = state.cas_service_url.clone();
     let user_repo = state.user_repo.clone();
     let ticket = params.ticket;
 
-    let cas_user = match cas_client.validate_ticket(&ticket, &service_url).await
-    {
+    let cas_user = match cas_client.validate_ticket(&ticket, &service_url).await {
         Ok(user) => user,
-        Err(_) =>
-        {
-            let _ = set_flash
-            (
+        Err(_) => {
+            let _ = set_flash(
                 &session,
                 FlashLevel::Error,
                 "Echec de l'authentification CAS. Veuillez reessayer.",
@@ -267,19 +251,12 @@ async fn cas_callback_handler
         }
     };
 
-    let result = tokio::task::spawn_blocking(move ||
-    {
-        user_repo.upsert_from_cas(&cas_user)
-    })
-    .await;
+    let result = tokio::task::spawn_blocking(move || user_repo.upsert_from_cas(&cas_user)).await;
 
-    let user = match result
-    {
+    let user = match result {
         Ok(Ok(user)) => user,
-        _ =>
-        {
-            let _ = set_flash
-            (
+        _ => {
+            let _ = set_flash(
                 &session,
                 FlashLevel::Error,
                 "Echec de l'authentification CAS. Veuillez reessayer.",
@@ -289,8 +266,7 @@ async fn cas_callback_handler
         }
     };
 
-    if let Err(e) = cycle_session(&session, user.id, "student").await
-    {
+    if let Err(e) = cycle_session(&session, user.id, "student").await {
         eprintln!("Session cycle error: {e}");
         return (StatusCode::INTERNAL_SERVER_ERROR, "Session error").into_response();
     }
@@ -300,8 +276,7 @@ async fn cas_callback_handler
 }
 
 #[derive(Deserialize)]
-struct AdminLoginForm
-{
+struct AdminLoginForm {
     login: String,
     password: String,
     #[serde(rename = "_csrf")]
@@ -312,22 +287,15 @@ async fn admin_login_handler(
     State(state): State<AppState>,
     session: Session,
     Form(form): Form<AdminLoginForm>,
-) -> Response
-{
+) -> Response {
     let admin_login = state.admin_login.clone();
     let login = form.login;
     let password = form.password;
-    let result = tokio::task::spawn_blocking(move ||
-    {
-        admin_login.execute(&login, &password)
-    })
-    .await;
+    let result = tokio::task::spawn_blocking(move || admin_login.execute(&login, &password)).await;
 
-    let admin = match result
-    {
+    let admin = match result {
         Ok(Ok(a)) => a,
-        _ =>
-        {
+        _ => {
             let _ = set_flash(
                 &session,
                 FlashLevel::Error,
@@ -338,8 +306,7 @@ async fn admin_login_handler(
         }
     };
 
-    if let Err(e) = cycle_session(&session, admin.id, "admin").await
-    {
+    if let Err(e) = cycle_session(&session, admin.id, "admin").await {
         eprintln!("Session cycle error: {e}");
         return (StatusCode::INTERNAL_SERVER_ERROR, "Session error").into_response();
     }
@@ -353,18 +320,15 @@ async fn admin_login_handler(
     Redirect::to("/admin").into_response()
 }
 
-async fn logout_handler(session: Session) -> Response
-{
+async fn logout_handler(session: Session) -> Response {
     session.clear().await;
-    if session.delete().await.is_err()
-    {
+    if session.delete().await.is_err() {
         return (StatusCode::INTERNAL_SERVER_ERROR, "Session error").into_response();
     }
     Redirect::to("/").into_response()
 }
 
-async fn cycle_session(session: &Session, user_id: i64, role: &str) -> Result<(), String>
-{
+async fn cycle_session(session: &Session, user_id: i64, role: &str) -> Result<(), String> {
     session.clear().await;
     session
         .cycle_id()

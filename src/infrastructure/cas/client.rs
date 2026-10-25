@@ -3,31 +3,23 @@ use crate::domain::user::CasUser;
 
 use super::parser::parse_cas_response;
 
-pub struct CasClient
-{
+pub struct CasClient {
     base_url: String,
     http: reqwest::Client,
 }
 
-impl CasClient
-{
-    pub fn new(base_url: String) -> Self
-    {
+impl CasClient {
+    pub fn new(base_url: String) -> Self {
         let http = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(5))
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
-        Self
-        {
-            base_url,
-            http,
-        }
+        Self { base_url, http }
     }
 
-    pub fn base_url(&self) -> &str
-    {
+    pub fn base_url(&self) -> &str {
         &self.base_url
     }
 
@@ -35,8 +27,7 @@ impl CasClient
         &self,
         ticket: &str,
         service_url: &str,
-    ) -> Result<CasUser, DomainError>
-    {
+    ) -> Result<CasUser, DomainError> {
         let base = format!("{}/serviceValidate", self.base_url);
         let mut url = reqwest::Url::parse(&base)
             .map_err(|e| DomainError::Validation(format!("invalid CAS base URL: {e}")))?;
@@ -44,7 +35,8 @@ impl CasClient
             .append_pair("service", service_url)
             .append_pair("ticket", ticket);
 
-        let response = self.http
+        let response = self
+            .http
             .get(url)
             .send()
             .await

@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Material
-{
+pub struct Material {
     pub id: i64,
     pub name: String,
     pub color: String,
@@ -10,11 +9,9 @@ pub struct Material
     pub spool_weight_grams: f64,
 }
 
-impl Material
-{
+impl Material {
     /// Display label combining name and color, e.g. "PLA - Noir mat".
-    pub fn label(&self) -> String
-    {
+    pub fn label(&self) -> String {
         format!("{} - {}", self.name, self.color)
     }
 }

@@ -6,14 +6,12 @@ use crate::interface::components::order_table::OrderTable;
 use crate::interface::session_helpers::extract_student_caller;
 
 #[server]
-pub async fn fetch_my_orders() -> Result<Vec<OrderView>, ServerFnError>
-{
+pub async fn fetch_my_orders() -> Result<Vec<OrderView>, ServerFnError> {
     let caller = extract_student_caller().await?;
 
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
     let list_orders = state.list_orders.clone();
-    tokio::task::spawn_blocking(move ||
-    {
+    tokio::task::spawn_blocking(move || {
         list_orders
             .execute(&caller)
             .map_err(|e| ServerFnError::new(format!("{e}")))
@@ -23,12 +21,10 @@ pub async fn fetch_my_orders() -> Result<Vec<OrderView>, ServerFnError>
 }
 
 #[component]
-pub fn MyOrdersPage() -> impl IntoView
-{
+pub fn MyOrdersPage() -> impl IntoView {
     let orders = Resource::new(|| (), |_| fetch_my_orders());
 
-    view!
-    {
+    view! {
         <div class="page-card">
             <div class="page-header">
                 <h1>"Mes commandes"</h1>

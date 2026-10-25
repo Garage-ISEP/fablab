@@ -8,14 +8,12 @@ use crate::interface::components::flash_message::FlashMessage;
 use crate::interface::session_helpers::extract_admin_caller;
 
 #[server]
-pub async fn fetch_all_materials_with_stock() -> Result<Vec<MaterialView>, ServerFnError>
-{
+pub async fn fetch_all_materials_with_stock() -> Result<Vec<MaterialView>, ServerFnError> {
     let _caller = extract_admin_caller().await?;
 
     let state = leptos::prelude::expect_context::<crate::interface::routes::AppState>();
     let list_materials = state.list_materials.clone();
-    tokio::task::spawn_blocking(move ||
-    {
+    tokio::task::spawn_blocking(move || {
         list_materials
             .execute_with_stock(false)
             .map_err(|e| ServerFnError::new(format!("{e}")))
@@ -31,66 +29,65 @@ pub async fn upsert_material_action(
     color: String,
     spool_weight_grams: String,
     available: Option<String>,
-) -> Result<(), ServerFnError>
-{
-    use tower_sessions::Session;
+) -> Result<(), ServerFnError> {
+    use crate::application::validation;
     use crate::domain::material::Material;
     use crate::interface::flash::{FlashLevel, set_flash};
-    use crate::application::validation;
+    use tower_sessions::Session;
 
     let _caller = extract_admin_caller().await?;
     let session: Session = leptos_axum::extract().await?;
 
-    let parsed_id = id.parse::<i64>()
+    let parsed_id = id
+        .parse::<i64>()
         .map_err(|_| ServerFnError::new("id invalide"))?;
 
-    let validated_name = match validation::validate_material_name(&name)
-    {
+    let validated_name = match validation::validate_material_name(&name) {
         Ok(n) => n,
-        Err(_) =>
-        {
-            let _ = set_flash(&session, FlashLevel::Error, "Le nom du materiau est requis.").await;
+        Err(_) => {
+            let _ = set_flash(
+                &session,
+                FlashLevel::Error,
+                "Le nom du materiau est requis.",
+            )
+            .await;
             leptos_axum::redirect("/admin/materials");
             return Ok(());
         }
     };
 
-    let validated_color = match validation::validate_color(&color)
-    {
+    let validated_color = match validation::validate_color(&color) {
         Ok(c) => c,
-        Err(_) =>
-        {
+        Err(_) => {
             let _ = set_flash(&session, FlashLevel::Error, "La couleur est requise.").await;
             leptos_axum::redirect("/admin/materials");
             return Ok(());
         }
     };
 
-    let parsed_weight = match spool_weight_grams.trim().parse::<f64>()
-    {
+    let parsed_weight = match spool_weight_grams.trim().parse::<f64>() {
         Ok(w) => w,
-        Err(_) =>
-        {
+        Err(_) => {
             let _ = set_flash(
                 &session,
                 FlashLevel::Error,
                 "Le poids de la bobine doit etre un nombre.",
-            ).await;
+            )
+            .await;
             leptos_axum::redirect("/admin/materials");
             return Ok(());
         }
     };
 
-    let validated_weight = match validation::validate_spool_weight_grams(parsed_weight)
-    {
+    let validated_weight = match validation::validate_spool_weight_grams(parsed_weight) {
         Ok(w) => w,
-        Err(_) =>
-        {
+        Err(_) => {
             let _ = set_flash(
                 &session,
                 FlashLevel::Error,
                 "Le poids de la bobine doit etre strictement positif.",
-            ).await;
+            )
+            .await;
             leptos_axum::redirect("/admin/materials");
             return Ok(());
         }
@@ -100,19 +97,14 @@ pub async fn upsert_material_action(
     let manage_material = state.manage_material.clone();
     let is_available = available.is_some();
 
-    let db_result = tokio::task::spawn_blocking(move ||
-    {
-        let final_id = if parsed_id <= 0
-        {
+    let db_result = tokio::task::spawn_blocking(move || {
+        let final_id = if parsed_id <= 0 {
             manage_material.next_id()?
-        }
-        else
-        {
+        } else {
             parsed_id
         };
 
-        let material = Material
-        {
+        let material = Material {
             id: final_id,
             name: validated_name,
             color: validated_color,
@@ -125,15 +117,17 @@ pub async fn upsert_material_action(
     .await
     .map_err(|e| ServerFnError::new(format!("{e}")))?;
 
-    match db_result
-    {
-        Ok(_) =>
-        {
+    match db_result {
+        Ok(_) => {
             let _ = set_flash(&session, FlashLevel::Success, "Materiau enregistre.").await;
         }
-        Err(_) =>
-        {
-            let _ = set_flash(&session, FlashLevel::Error, "Erreur lors de l'enregistrement.").await;
+        Err(_) => {
+            let _ = set_flash(
+                &session,
+                FlashLevel::Error,
+                "Erreur lors de l'enregistrement.",
+            )
+            .await;
         }
     }
 
@@ -142,12 +136,10 @@ pub async fn upsert_material_action(
 }
 
 #[component]
-pub fn AdminMaterialsPage() -> impl IntoView
-{
+pub fn AdminMaterialsPage() -> impl IntoView {
     let materials = Resource::new(|| (), |_| fetch_all_materials_with_stock());
 
-    view!
-    {
+    view! {
         <div class="page-card">
             <div class="page-header">
                 <h1>"Materiaux"</h1>
@@ -249,8 +241,7 @@ pub fn AdminMaterialsPage() -> impl IntoView
     }
 }
 
-fn render_material_row(m: MaterialView) -> impl IntoView
-{
+fn render_material_row(m: MaterialView) -> impl IntoView {
     let mid = m.id.to_string();
     let delete_action = format!("/admin/materials/{}/delete", m.id);
     let name = m.name.clone();
@@ -262,21 +253,15 @@ fn render_material_row(m: MaterialView) -> impl IntoView
     let toggle_checked = !m.available;
     let spool_hidden = format!("{spool}");
 
-    let stock_class = if remaining < 0.0
-    {
+    let stock_class = if remaining < 0.0 {
         "stock-overdraft"
-    }
-    else if remaining < spool * 0.10
-    {
+    } else if remaining < spool * 0.10 {
         "stock-low"
-    }
-    else
-    {
+    } else {
         "stock-ok"
     };
 
-    view!
-    {
+    view! {
         <tr>
             <td class="td-name">{name.clone()}</td>
             <td>{color.clone()}</td>

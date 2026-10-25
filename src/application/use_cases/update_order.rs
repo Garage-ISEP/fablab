@@ -8,8 +8,7 @@ use crate::application::errors::AppError;
 use crate::application::use_cases::order_files::PurgeOrderFilesUseCase;
 use crate::domain::material::Material;
 use crate::domain::order::{Order, OrderStatus};
-use crate::domain::repositories::
-{
+use crate::domain::repositories::{
     MaterialRepository, OrderFileRepository, OrderRepository, UserRepository,
 };
 
@@ -38,36 +37,38 @@ where
         users: Arc<U>,
         materials: Arc<M>,
         purge: Arc<PurgeOrderFilesUseCase<F>>,
-    ) -> Self
-    {
-        Self { orders, users, materials, purge }
+    ) -> Self {
+        Self {
+            orders,
+            users,
+            materials,
+            purge,
+        }
     }
 
     pub async fn execute(
         &self,
         input: UpdateOrderInput,
         caller: &Caller,
-    ) -> Result<OrderView, AppError>
-    {
-        if !caller.is_admin()
-        {
+    ) -> Result<OrderView, AppError> {
+        if !caller.is_admin() {
             return Err(AppError::NotAuthorized);
         }
         input.validate()?;
 
-        let mut order = self.orders
+        let mut order = self
+            .orders
             .find_by_id(input.order_id)?
             .ok_or_else(|| AppError::NotFound(format!("order {}", input.order_id)))?;
 
         let previous_status = order.status;
 
-        if let Some(new_mid) = input.material_id
-        {
-            let material = self.materials
+        if let Some(new_mid) = input.material_id {
+            let material = self
+                .materials
                 .find_by_id(new_mid)?
                 .ok_or_else(|| AppError::NotFound(format!("material {new_mid}")))?;
-            if !material.available
-            {
+            if !material.available {
                 return Err(AppError::InvalidInput(
                     "le materiau selectionne n'est pas disponible".to_owned(),
                 ));
@@ -75,65 +76,61 @@ where
             order.material_id = Some(new_mid);
         }
 
-        if let Some(ref status_str) = input.status
-        {
+        if let Some(ref status_str) = input.status {
             let new_status = OrderStatus::from_str(status_str)?;
             order.status = order.try_advance_status(new_status)?;
         }
 
-        if let Some(rp) = input.requires_payment
-        {
+        if let Some(rp) = input.requires_payment {
             order.requires_payment = rp;
         }
-        if let Some(w) = input.sliced_weight_grams
-        {
+        if let Some(w) = input.sliced_weight_grams {
             order.sliced_weight_grams = Some(w);
         }
-        if let Some(t) = input.print_time_minutes
-        {
+        if let Some(t) = input.print_time_minutes {
             order.print_time_minutes = Some(t);
         }
 
-        match (order.material_id, order.sliced_weight_grams)
-        {
-            (Some(mid), Some(_)) =>
-            {
+        match (order.material_id, order.sliced_weight_grams) {
+            (Some(mid), Some(_)) => {
                 let material = self.load_material(mid)?;
-                self.orders.update_if_stock_sufficient(&order, material.spool_weight_grams)?;
+                self.orders
+                    .update_if_stock_sufficient(&order, material.spool_weight_grams)?;
             }
-            _ =>
-            {
+            _ => {
                 self.orders.update(&order)?;
             }
         }
 
         let became_terminal = previous_status != order.status
             && matches!(order.status, OrderStatus::Livre | OrderStatus::Annule);
-        if became_terminal
-        {
+        if became_terminal {
             self.purge.execute(order.id).await?;
         }
 
         self.build_view(order)
     }
 
-    fn load_material(&self, material_id: i64) -> Result<Material, AppError>
-    {
+    fn load_material(&self, material_id: i64) -> Result<Material, AppError> {
         self.materials
             .find_by_id(material_id)?
             .ok_or_else(|| AppError::NotFound(format!("material {material_id}")))
     }
 
-    fn build_view(&self, order: Order) -> Result<OrderView, AppError>
-    {
-        let user = self.users
+    fn build_view(&self, order: Order) -> Result<OrderView, AppError> {
+        let user = self
+            .users
             .find_by_id(order.user_id)?
             .ok_or_else(|| AppError::NotFound(format!("user {}", order.user_id)))?;
-        let material_label = match order.material_id
-        {
+        let material_label = match order.material_id {
             Some(mid) => self.materials.find_by_id(mid)?.map(|m| m.label()),
             None => None,
         };
-        Ok(OrderView::from_order(&order, user.display_name, material_label, Vec::new()))
+        Ok(OrderView::from_order(
+            &order,
+            user.display_name,
+            material_label,
+            Vec::new(),
+        ))
     }
 }
