@@ -251,8 +251,24 @@ async fn cas_callback_handler
     let user_repo = state.user_repo.clone();
     let ticket = params.ticket;
 
-    let result = tokio::task::spawn_blocking(move || {
-        let cas_user = cas_client.validate_ticket(&ticket, &service_url)?;
+    let cas_user = match cas_client.validate_ticket(&ticket, &service_url).await
+    {
+        Ok(user) => user,
+        Err(_) =>
+        {
+            let _ = set_flash
+            (
+                &session,
+                FlashLevel::Error,
+                "Echec de l'authentification CAS. Veuillez reessayer.",
+            )
+            .await;
+            return Redirect::to("/").into_response();
+        }
+    };
+
+    let result = tokio::task::spawn_blocking(move ||
+    {
         user_repo.upsert_from_cas(&cas_user)
     })
     .await;

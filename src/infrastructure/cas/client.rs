@@ -6,18 +6,18 @@ use super::parser::parse_cas_response;
 pub struct CasClient
 {
     base_url: String,
-    http: reqwest::blocking::Client,
+    http: reqwest::Client,
 }
 
 impl CasClient
 {
     pub fn new(base_url: String) -> Self
     {
-        let http = reqwest::blocking::Client::builder()
+        let http = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(5))
             .timeout(std::time::Duration::from_secs(10))
             .build()
-            .unwrap_or_else(|_| reqwest::blocking::Client::new());
+            .unwrap_or_else(|_| reqwest::Client::new());
 
         Self
         {
@@ -31,7 +31,7 @@ impl CasClient
         &self.base_url
     }
 
-    pub fn validate_ticket(
+    pub async fn validate_ticket(
         &self,
         ticket: &str,
         service_url: &str,
@@ -47,10 +47,12 @@ impl CasClient
         let response = self.http
             .get(url)
             .send()
+            .await
             .map_err(|e| DomainError::Validation(format!("CAS HTTP request failed: {e}")))?;
 
         let body = response
             .text()
+            .await
             .map_err(|e| DomainError::Validation(format!("CAS response read error: {e}")))?;
 
         parse_cas_response(&body)
