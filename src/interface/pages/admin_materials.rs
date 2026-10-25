@@ -145,7 +145,15 @@ pub fn AdminMaterialsPage() -> impl IntoView {
                 <h1>"Materiaux"</h1>
             </div>
 
+
             <FlashMessage />
+
+            <section class="detail-card" aria-labelledby="printer-filament-title">
+                <h2 id="printer-filament-title">"Filament dans l'imprimante"</h2>
+                <p class="detail-value">"750 g"</p>
+            </section>
+
+            <h2></h2>
 
             <Suspense fallback=|| view! { <p class="loading">"Chargement..."</p> }>
                 {move ||
@@ -158,9 +166,9 @@ pub fn AdminMaterialsPage() -> impl IntoView {
                             {
                                 view!
                                 {
-                                    <div class="empty-state">
+                                    <section class="empty-state">
                                         <p>"Aucun materiau enregistre."</p>
-                                    </div>
+                                    </section>
                                 }.into_any()
                             }
                             Ok(mats) =>
