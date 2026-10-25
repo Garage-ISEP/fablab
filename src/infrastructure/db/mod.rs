@@ -1,4 +1,5 @@
 pub mod admin_repo;
+pub mod bambu_account_repo;
 pub mod material_repo;
 pub mod migrations;
 pub mod order_file_repo;

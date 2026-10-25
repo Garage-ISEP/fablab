@@ -1,3 +1,4 @@
+pub mod bambu_banner;
 pub mod csrf_field;
 pub mod flash_message;
 pub mod nav;

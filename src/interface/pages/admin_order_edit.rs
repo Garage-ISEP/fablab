@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::application::dtos::order_output::OrderView;
 use crate::domain::material::Material;
+use crate::interface::components::bambu_banner::BambuStatusBanner;
 use crate::interface::components::csrf_field::CsrfField;
 use crate::interface::components::flash_message::FlashMessage;
 use crate::interface::session_helpers::extract_admin_caller;
@@ -108,6 +109,7 @@ pub fn AdminOrderEditPage() -> impl IntoView {
     view! {
         <div class="page-card">
             <FlashMessage />
+            <BambuStatusBanner />
             <Suspense fallback=|| view! { <p class="loading">"Chargement..."</p> }>
                 {move ||
                 {

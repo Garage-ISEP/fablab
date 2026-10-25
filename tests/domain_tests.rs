@@ -242,8 +242,17 @@ fn try_advance_still_blocks_invalid_transitions_when_material_set() {
 // ============================================================
 
 #[test]
-fn stock_remaining_weight_handles_typical_case() {
-    assert!((stock::remaining_weight(1000.0, 250.0) - 750.0).abs() < f64::EPSILON);
+fn stock_available_weight_handles_typical_case() {
+    assert!((stock::available_weight(1000.0, 250.0) - 750.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn only_queued_and_running_orders_reserve_filament() {
+    assert!(OrderStatus::ATraiter.reserves_filament());
+    assert!(OrderStatus::EnTraitement.reserves_filament());
+    assert!(!OrderStatus::Imprime.reserves_filament());
+    assert!(!OrderStatus::Livre.reserves_filament());
+    assert!(!OrderStatus::Annule.reserves_filament());
 }
 
 #[test]

@@ -1,36 +1,36 @@
-//! Stock accounting rules for 3D-printer filament spools.
+//! Stock accounting rules for 3D-printer filament.
 //!
-//! A spool has a fixed total weight. Each non-cancelled order referencing
-//! a material consumes part of that weight (the `sliced_weight_grams` the
-//! admin enters once the job has been sliced). Remaining stock is a pure
-//! function of those two inputs; this module owns that arithmetic so both
-//! the in-memory tests and the SQLite implementation share a single
-//! source of truth.
+//! The amount of filament left on the spools is measured by the printers
+//! (see [`crate::domain::filament`]). Orders that are accepted but not yet
+//! printed reserve their `sliced_weight_grams` on top of that measure, so
+//! two queued orders cannot both count on the same filament. This module
+//! owns that arithmetic so both the in-memory tests and the SQLite
+//! implementation share a single source of truth.
 
 use super::errors::DomainError;
 
-/// Weight still available on a spool after subtracting what running
-/// orders already consume. Never returns a negative value clamped to
-/// zero — the caller is expected to treat negative results as overdraft.
-pub fn remaining_weight(spool_weight_grams: f64, consumed_grams: f64) -> f64 {
-    spool_weight_grams - consumed_grams
+/// Filament still free for new orders: what the printers measure minus
+/// what queued orders already reserve. Not clamped: a negative result
+/// means the queue already needs more than what is loaded.
+pub fn available_weight(measured_remaining_grams: f64, reserved_grams: f64) -> f64 {
+    measured_remaining_grams - reserved_grams
 }
 
-/// Verifies that a newly requested weight fits in the remaining stock
-/// for a material. Returns `Ok(())` when the sum of `already_consumed`
-/// and `requested` stays within `spool_weight_grams`, otherwise returns
-/// a [`DomainError::InsufficientStock`] carrying the numbers the admin
+/// Verifies that a newly requested weight fits in the free stock of a
+/// material. Returns `Ok(())` when `requested_grams` stays within
+/// `measured_remaining_grams - reserved_grams`, otherwise returns a
+/// [`DomainError::InsufficientStock`] carrying the numbers the admin
 /// needs to diagnose the overdraft.
 ///
-/// `already_consumed` must already exclude the order currently being
+/// `reserved_grams` must already exclude the order currently being
 /// updated so we never double-count its own previous weight.
 pub fn check_sufficient(
     material_id: i64,
-    spool_weight_grams: f64,
-    already_consumed_grams: f64,
+    measured_remaining_grams: f64,
+    reserved_grams: f64,
     requested_grams: f64,
 ) -> Result<(), DomainError> {
-    let available = remaining_weight(spool_weight_grams, already_consumed_grams);
+    let available = available_weight(measured_remaining_grams, reserved_grams);
     if requested_grams > available {
         return Err(DomainError::InsufficientStock {
             material_id,
@@ -46,24 +46,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn remaining_weight_nominal() {
-        assert!((remaining_weight(1000.0, 300.0) - 700.0).abs() < f64::EPSILON);
+    fn available_weight_nominal() {
+        assert!((available_weight(1000.0, 300.0) - 700.0).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn remaining_weight_zero_consumed() {
-        assert!((remaining_weight(1000.0, 0.0) - 1000.0).abs() < f64::EPSILON);
+    fn available_weight_nothing_reserved() {
+        assert!((available_weight(1000.0, 0.0) - 1000.0).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn remaining_weight_fully_consumed() {
-        assert!(remaining_weight(1000.0, 1000.0).abs() < f64::EPSILON);
+    fn available_weight_fully_reserved() {
+        assert!(available_weight(1000.0, 1000.0).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn remaining_weight_overdraft_is_negative() {
+    fn available_weight_overdraft_is_negative() {
         // The function does not clamp; callers decide what to do with it.
-        assert!(remaining_weight(1000.0, 1200.0) < 0.0);
+        assert!(available_weight(1000.0, 1200.0) < 0.0);
     }
 
     #[test]

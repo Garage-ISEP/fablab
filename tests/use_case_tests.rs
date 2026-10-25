@@ -6,10 +6,15 @@ use fablab::application::dtos::order_filter::{OrderFilter, PaymentFilter};
 use fablab::application::dtos::order_output::OrderView;
 use fablab::application::dtos::order_sort::{OrderSort, SortColumn, SortDirection};
 use fablab::domain::errors::DomainError;
-use fablab::domain::material::Material;
+use fablab::domain::filament::{
+    BambuAccount, BambuCredentials, ConnectionState, InventorySnapshot, LoadedSpool, PrinterDevice,
+    PrinterSnapshot,
+};
+use fablab::domain::material::{LoadedMaterial, Material};
 use fablab::domain::order::{NewOrder, Order, OrderStatus};
 use fablab::domain::repositories::{
-    AdminRepository, MaterialRepository, OrderRepository, PasswordVerifier, UserRepository,
+    AdminRepository, BambuAccountRepository, BambuCloudApi, MaterialRepository, OrderRepository,
+    PasswordVerifier, PrinterTelemetry, UserRepository,
 };
 use fablab::domain::user::{AdminUser, CasUser, User};
 
@@ -20,6 +25,7 @@ use fablab::application::use_cases::admin_login::AdminLoginUseCase;
 use fablab::application::use_cases::get_order::GetOrderUseCase;
 use fablab::application::use_cases::list_orders::ListOrdersUseCase;
 use fablab::application::use_cases::order_files::PurgeOrderFilesUseCase;
+use fablab::application::use_cases::printers::{ConfigureBambuUseCase, SyncMaterialsUseCase};
 use fablab::application::use_cases::submit_order::SubmitOrderUseCase;
 use fablab::application::use_cases::update_order::UpdateOrderUseCase;
 
@@ -96,7 +102,7 @@ impl OrderRepository for MockOrderRepo {
         }
     }
 
-    fn sum_weight_by_material(
+    fn sum_reserved_weight_by_material(
         &self,
         material_id: i64,
         exclude_order_id: Option<i64>,
@@ -105,7 +111,7 @@ impl OrderRepository for MockOrderRepo {
         let sum = orders
             .iter()
             .filter(|o| o.material_id == Some(material_id))
-            .filter(|o| o.status != OrderStatus::Annule)
+            .filter(|o| o.status.reserves_filament())
             .filter(|o| match exclude_order_id {
                 Some(excl) => o.id != excl,
                 None => true,
@@ -118,7 +124,7 @@ impl OrderRepository for MockOrderRepo {
     fn update_if_stock_sufficient(
         &self,
         order: &Order,
-        spool_weight_grams: f64,
+        measured_remaining_grams: f64,
     ) -> Result<(), DomainError> {
         // Mirrors the SQLite implementation: read the sum excluding
         // the target order, run the domain-level stock check, and
@@ -130,11 +136,11 @@ impl OrderRepository for MockOrderRepo {
             .sliced_weight_grams
             .ok_or_else(|| DomainError::Validation("order must have a weight".to_owned()))?;
 
-        let consumed = self.sum_weight_by_material(material_id, Some(order.id))?;
+        let reserved = self.sum_reserved_weight_by_material(material_id, Some(order.id))?;
         fablab::domain::stock::check_sufficient(
             material_id,
-            spool_weight_grams,
-            consumed,
+            measured_remaining_grams,
+            reserved,
             requested,
         )?;
 
@@ -251,34 +257,82 @@ impl MaterialRepository for MockMaterialRepo {
             .collect())
     }
 
-    fn upsert(&self, material: &Material) -> Result<(), DomainError> {
+    fn sync_loaded(&self, loaded: &[LoadedMaterial]) -> Result<(), DomainError> {
         let mut mats = self.materials.lock().unwrap();
-        if let Some(existing) = mats.iter_mut().find(|m| m.id == material.id) {
-            *existing = material.clone();
-        } else {
-            mats.push(material.clone());
+        for mat in mats.iter_mut() {
+            mat.available = false;
+        }
+        for item in loaded {
+            let key = Some(item.bambu_key.clone());
+            if let Some(existing) = mats.iter_mut().find(|m| m.bambu_key == key) {
+                existing.available = true;
+            } else {
+                let id = mats.iter().map(|m| m.id).max().unwrap_or(0) + 1;
+                mats.push(Material {
+                    id,
+                    name: item.name.clone(),
+                    color: item.color.clone(),
+                    color_hex: Some(item.color_hex.clone()),
+                    bambu_key: key,
+                    available: true,
+                });
+            }
         }
         Ok(())
     }
+}
 
-    fn max_id(&self) -> Result<i64, DomainError> {
-        let mats = self.materials.lock().unwrap();
-        Ok(mats.iter().map(|m| m.id).max().unwrap_or(0))
+/// Printers reporting one fresh spool per material, keyed by
+/// [`material_key`]. A material missing from the list has an unknown stock.
+struct FakeTelemetry {
+    snapshot: Mutex<InventorySnapshot>,
+    connected: Mutex<Vec<(BambuCredentials, Vec<PrinterDevice>)>>,
+}
+
+impl FakeTelemetry {
+    fn with_stock(stock: &[(i64, f64)]) -> Arc<Self> {
+        let mut printer = PrinterSnapshot::new(PrinterDevice {
+            serial: "SERIAL".to_owned(),
+            name: "X1C".to_owned(),
+            model: "X1 Carbon".to_owned(),
+        });
+        printer.fresh = true;
+        printer.spools = Some(
+            stock
+                .iter()
+                .map(|(material_id, grams)| LoadedSpool {
+                    slot: "A1".to_owned(),
+                    product_id: format!("P{material_id}"),
+                    name: format!("PLA-{material_id}"),
+                    color_hex: "000000".to_owned(),
+                    remaining_percent: Some(100),
+                    spool_weight_grams: Some(*grams),
+                })
+                .collect(),
+        );
+        Arc::new(Self {
+            snapshot: Mutex::new(InventorySnapshot {
+                connection: ConnectionState::Connected,
+                printers: vec![printer],
+                ams_revision: 1,
+            }),
+            connected: Mutex::new(Vec::new()),
+        })
+    }
+}
+
+impl PrinterTelemetry for FakeTelemetry {
+    fn snapshot(&self) -> InventorySnapshot {
+        self.snapshot.lock().unwrap().clone()
     }
 
-    fn count_orders_using(&self, _id: i64) -> Result<i64, DomainError> {
-        Ok(0)
+    fn connect(&self, credentials: BambuCredentials, devices: Vec<PrinterDevice>) {
+        self.connected.lock().unwrap().push((credentials, devices));
     }
+}
 
-    fn delete(&self, id: i64) -> Result<(), DomainError> {
-        let mut mats = self.materials.lock().unwrap();
-        let len_before = mats.len();
-        mats.retain(|m| m.id != id);
-        if mats.len() == len_before {
-            return Err(DomainError::MaterialNotFound { id });
-        }
-        Ok(())
-    }
+fn material_key(material_id: i64) -> String {
+    format!("P{material_id}:000000")
 }
 
 struct MockAdminRepo {
@@ -447,23 +501,18 @@ fn seed_order(repo: &MockOrderRepo, user_id: i64) -> Order {
     .unwrap()
 }
 
-/// Inserts a material into the mock repo with a chosen id, availability
-/// and spool weight. Used by update-order tests that need a material
-/// attached to exercise stock or transition rules.
-fn seed_material(
-    repo: &MockMaterialRepo,
-    id: i64,
-    available: bool,
-    spool_weight_grams: f64,
-) -> Material {
+/// Inserts a material into the mock repo with a chosen id and
+/// availability. Its stock comes from [`FakeTelemetry::with_stock`].
+fn seed_material(repo: &MockMaterialRepo, id: i64, available: bool) -> Material {
     let mat = Material {
         id,
         name: format!("PLA-{id}"),
         color: "Noir".to_owned(),
+        color_hex: Some("000000".to_owned()),
+        bambu_key: Some(material_key(id)),
         available,
-        spool_weight_grams,
     };
-    repo.upsert(&mat).unwrap();
+    repo.materials.lock().unwrap().push(mat.clone());
     mat
 }
 
@@ -670,10 +719,16 @@ async fn update_order_admin_can_update() {
         Arc::new(MockFileStorage::default());
     let purge = Arc::new(PurgeOrderFilesUseCase::new(order_files, storage));
 
-    seed_material(&materials, 1, true, 1000.0);
+    seed_material(&materials, 1, true);
     let order = seed_order_with_material(&orders, 1, 1);
 
-    let uc = UpdateOrderUseCase::new(orders, users, materials, purge);
+    let uc = UpdateOrderUseCase::new(
+        orders,
+        users,
+        materials,
+        purge,
+        FakeTelemetry::with_stock(&[(1, 1000.0)]),
+    );
 
     let input = UpdateOrderInput {
         order_id: order.id,
@@ -705,7 +760,13 @@ async fn update_order_student_is_rejected() {
 
     let order = seed_order(&orders, 1);
 
-    let uc = UpdateOrderUseCase::new(orders, users, materials, purge);
+    let uc = UpdateOrderUseCase::new(
+        orders,
+        users,
+        materials,
+        purge,
+        FakeTelemetry::with_stock(&[(1, 1000.0)]),
+    );
 
     let input = UpdateOrderInput {
         order_id: order.id,
@@ -732,10 +793,16 @@ async fn update_order_invalid_status_transition_rejected() {
         Arc::new(MockFileStorage::default());
     let purge = Arc::new(PurgeOrderFilesUseCase::new(order_files, storage));
 
-    seed_material(&materials, 1, true, 1000.0);
+    seed_material(&materials, 1, true);
     let _order = seed_order_with_material(&orders, 1, 1);
 
-    let uc = UpdateOrderUseCase::new(orders, users, materials, purge);
+    let uc = UpdateOrderUseCase::new(
+        orders,
+        users,
+        materials,
+        purge,
+        FakeTelemetry::with_stock(&[(1, 1000.0)]),
+    );
 
     let input = UpdateOrderInput {
         order_id: 1,
@@ -763,7 +830,13 @@ async fn update_order_rejects_negative_weight() {
 
     let _order = seed_order(&orders, 1);
 
-    let uc = UpdateOrderUseCase::new(orders, users, materials, purge);
+    let uc = UpdateOrderUseCase::new(
+        orders,
+        users,
+        materials,
+        purge,
+        FakeTelemetry::with_stock(&[(1, 1000.0)]),
+    );
 
     let input = UpdateOrderInput {
         order_id: 1,
@@ -791,7 +864,13 @@ async fn update_order_rejects_negative_print_time() {
 
     let _order = seed_order(&orders, 1);
 
-    let uc = UpdateOrderUseCase::new(orders, users, materials, purge);
+    let uc = UpdateOrderUseCase::new(
+        orders,
+        users,
+        materials,
+        purge,
+        FakeTelemetry::with_stock(&[(1, 1000.0)]),
+    );
 
     let input = UpdateOrderInput {
         order_id: 1,
@@ -811,8 +890,11 @@ async fn update_order_rejects_negative_print_time() {
 // update_order — material change, stock check, advancement invariant
 // ----------------------------------------------------------------------------
 
-/// Shared test scaffolding for the new material/stock-related tests.
-fn build_update_uc() -> (
+/// Shared test scaffolding for the material/stock-related tests. `stock`
+/// lists the grams the AMS measures per material id.
+fn build_update_uc(
+    stock: &[(i64, f64)],
+) -> (
     Arc<MockOrderRepo>,
     Arc<MockMaterialRepo>,
     UpdateOrderUseCase<MockOrderRepo, MockUserRepo, MockMaterialRepo, MockOrderFileRepo>,
@@ -825,14 +907,20 @@ fn build_update_uc() -> (
         Arc::new(MockFileStorage::default());
     let purge = Arc::new(PurgeOrderFilesUseCase::new(order_files, storage));
 
-    let uc = UpdateOrderUseCase::new(Arc::clone(&orders), users, Arc::clone(&materials), purge);
+    let uc = UpdateOrderUseCase::new(
+        Arc::clone(&orders),
+        users,
+        Arc::clone(&materials),
+        purge,
+        FakeTelemetry::with_stock(stock),
+    );
     (orders, materials, uc)
 }
 
 #[tokio::test]
 async fn update_order_rejects_unknown_material() {
-    let (orders, materials, uc) = build_update_uc();
-    seed_material(&materials, 1, true, 1000.0);
+    let (orders, materials, uc) = build_update_uc(&[(1, 1000.0)]);
+    seed_material(&materials, 1, true);
     let order = seed_order_with_material(&orders, 1, 1);
 
     let input = UpdateOrderInput {
@@ -850,9 +938,9 @@ async fn update_order_rejects_unknown_material() {
 
 #[tokio::test]
 async fn update_order_rejects_unavailable_material() {
-    let (orders, materials, uc) = build_update_uc();
-    seed_material(&materials, 1, true, 1000.0);
-    seed_material(&materials, 2, false, 1000.0); // unavailable target
+    let (orders, materials, uc) = build_update_uc(&[(1, 1000.0), (2, 1000.0)]);
+    seed_material(&materials, 1, true);
+    seed_material(&materials, 2, false); // unavailable target
     let order = seed_order_with_material(&orders, 1, 1);
 
     let input = UpdateOrderInput {
@@ -870,10 +958,10 @@ async fn update_order_rejects_unavailable_material() {
 
 #[tokio::test]
 async fn update_order_rejects_weight_exceeding_stock() {
-    let (orders, materials, uc) = build_update_uc();
-    // 500g spool. Existing order on this material consuming 300g (active)
-    // plus the order under test that will try to claim 400g → 700g > 500g.
-    seed_material(&materials, 1, true, 500.0);
+    // 500g measured. Existing queued order on this material reserving
+    // 300g plus the order under test that will try to claim 400g → 700g > 500g.
+    let (orders, materials, uc) = build_update_uc(&[(1, 500.0)]);
+    seed_material(&materials, 1, true);
 
     let consumer = seed_order_with_material(&orders, 1, 1);
     let mut c = consumer.clone();
@@ -902,7 +990,7 @@ async fn update_order_rejects_weight_exceeding_stock() {
 
 #[tokio::test]
 async fn update_order_cannot_advance_without_material() {
-    let (orders, _materials, uc) = build_update_uc();
+    let (orders, _materials, uc) = build_update_uc(&[]);
     let order = seed_order(&orders, 1); // no material attached
 
     let input = UpdateOrderInput {
@@ -923,7 +1011,7 @@ async fn update_order_can_cancel_without_material() {
     // Cancellation must always be reachable — even for orders that
     // were never assigned a material, because users can abandon a
     // pending request before the admin picks a spool.
-    let (orders, _materials, uc) = build_update_uc();
+    let (orders, _materials, uc) = build_update_uc(&[]);
     let order = seed_order(&orders, 1);
 
     let input = UpdateOrderInput {
@@ -944,11 +1032,11 @@ async fn update_order_can_cancel_without_material() {
 
 #[tokio::test]
 async fn update_order_can_change_material_when_stock_fits() {
-    let (orders, materials, uc) = build_update_uc();
+    let (orders, materials, uc) = build_update_uc(&[(1, 1000.0), (2, 1000.0)]);
     // Two materials, both with ample spool. Moving the order from
     // material 1 to material 2 should succeed and persist.
-    seed_material(&materials, 1, true, 1000.0);
-    seed_material(&materials, 2, true, 1000.0);
+    seed_material(&materials, 1, true);
+    seed_material(&materials, 2, true);
     let order = seed_order_with_material(&orders, 1, 1);
 
     let input = UpdateOrderInput {
@@ -973,11 +1061,11 @@ async fn update_order_can_change_material_when_stock_fits() {
 
 #[tokio::test]
 async fn update_order_rejects_material_swap_when_target_full() {
-    let (orders, materials, uc) = build_update_uc();
-    // Target material (id 2) is almost full: an existing active order
-    // already consumes 900g of the 1000g spool.
-    seed_material(&materials, 1, true, 1000.0);
-    seed_material(&materials, 2, true, 1000.0);
+    // Target material (id 2) is almost used up: an existing queued order
+    // already reserves 900g of the 1000g measured.
+    let (orders, materials, uc) = build_update_uc(&[(1, 1000.0), (2, 1000.0)]);
+    seed_material(&materials, 1, true);
+    seed_material(&materials, 2, true);
 
     let hog = seed_order_with_material(&orders, 1, 2);
     let mut h = hog.clone();
@@ -1001,6 +1089,285 @@ async fn update_order_rejects_material_swap_when_target_full() {
     // Swap rolled back: order should still point at material 1.
     let reloaded = orders.find_by_id(order.id).unwrap().unwrap();
     assert_eq!(reloaded.material_id, Some(1));
+}
+
+#[tokio::test]
+async fn update_order_blocks_new_weight_when_stock_is_unknown() {
+    // Material 1 is not in any fresh AMS: no measure, so no reservation.
+    let (orders, materials, uc) = build_update_uc(&[]);
+    seed_material(&materials, 1, true);
+    let order = seed_order_with_material(&orders, 1, 1);
+
+    let input = UpdateOrderInput {
+        order_id: order.id,
+        status: None,
+        requires_payment: None,
+        sliced_weight_grams: Some(10.0),
+        print_time_minutes: None,
+        material_id: None,
+    };
+
+    let err = uc.execute(input, &Caller::Admin).await.unwrap_err();
+    assert!(matches!(err, AppError::InvalidInput(ref msg) if msg.contains("stock inconnu")));
+    let reloaded = orders.find_by_id(order.id).unwrap().unwrap();
+    assert_eq!(reloaded.sliced_weight_grams, None);
+}
+
+#[tokio::test]
+async fn update_order_allows_other_edits_when_stock_is_unknown() {
+    // The weight was reserved earlier; advancing the order or flagging the
+    // payment must not need a fresh AMS measure.
+    let (orders, materials, uc) = build_update_uc(&[]);
+    seed_material(&materials, 1, true);
+    let mut order = seed_order_with_material(&orders, 1, 1);
+    order.sliced_weight_grams = Some(120.0);
+    orders.update(&order).unwrap();
+
+    let input = UpdateOrderInput {
+        order_id: order.id,
+        status: Some("en_traitement".to_owned()),
+        requires_payment: Some(true),
+        sliced_weight_grams: Some(120.0),
+        print_time_minutes: None,
+        material_id: Some(1),
+    };
+
+    let view = uc
+        .execute(input, &Caller::Admin)
+        .await
+        .expect("edits without a new reservation should succeed");
+    assert_eq!(view.status, "en_traitement");
+    assert!(view.requires_payment);
+}
+
+#[tokio::test]
+async fn update_order_printed_orders_no_longer_reserve_filament() {
+    // A printed 900g job is already gone from the 1000g measured by the
+    // AMS, so a new 500g job fits.
+    let (orders, materials, uc) = build_update_uc(&[(1, 1000.0)]);
+    seed_material(&materials, 1, true);
+
+    let mut printed = seed_order_with_material(&orders, 1, 1);
+    printed.sliced_weight_grams = Some(900.0);
+    printed.status = OrderStatus::Imprime;
+    orders.update(&printed).unwrap();
+
+    let order = seed_order_with_material(&orders, 1, 1);
+    let input = UpdateOrderInput {
+        order_id: order.id,
+        status: None,
+        requires_payment: None,
+        sliced_weight_grams: Some(500.0),
+        print_time_minutes: None,
+        material_id: None,
+    };
+
+    let view = uc
+        .execute(input, &Caller::Admin)
+        .await
+        .expect("printed orders must not count as reserved");
+    assert_eq!(view.sliced_weight_grams, Some(500.0));
+}
+
+#[tokio::test]
+async fn update_order_keeps_its_material_once_unloaded() {
+    // The spool ran out and left the AMS: saving the order with its
+    // current material must still work.
+    let (orders, materials, uc) = build_update_uc(&[]);
+    seed_material(&materials, 1, false);
+    let order = seed_order_with_material(&orders, 1, 1);
+
+    let input = UpdateOrderInput {
+        order_id: order.id,
+        status: None,
+        requires_payment: Some(true),
+        sliced_weight_grams: None,
+        print_time_minutes: None,
+        material_id: Some(1),
+    };
+
+    let view = uc
+        .execute(input, &Caller::Admin)
+        .await
+        .expect("re-saving the current material should succeed");
+    assert!(view.requires_payment);
+}
+
+// ============================================================================
+// printers: AMS material sync and Bambu token
+// ============================================================================
+
+#[test]
+fn sync_materials_creates_loaded_products_once() {
+    let materials = Arc::new(MockMaterialRepo::default());
+    let telemetry = FakeTelemetry::with_stock(&[(7, 1000.0)]);
+    let uc = SyncMaterialsUseCase::new(Arc::clone(&materials), telemetry.clone());
+
+    let revision = uc.execute(None).unwrap();
+    assert_eq!(revision, Some(1));
+    let all = materials.find_all().unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].bambu_key.as_deref(), Some(material_key(7).as_str()));
+    assert_eq!(all[0].color, "Noir");
+
+    // Same revision: nothing is rewritten, even if the repo changed.
+    materials.materials.lock().unwrap()[0].available = false;
+    assert_eq!(uc.execute(revision).unwrap(), revision);
+    assert!(!materials.find_all().unwrap()[0].available);
+}
+
+#[test]
+fn sync_materials_waits_for_every_printer() {
+    let materials = Arc::new(MockMaterialRepo::default());
+    seed_material(&materials, 1, true);
+    let telemetry = FakeTelemetry::with_stock(&[]);
+    telemetry.snapshot.lock().unwrap().printers[0].spools = None;
+    let uc = SyncMaterialsUseCase::new(Arc::clone(&materials), telemetry);
+
+    assert_eq!(uc.execute(None).unwrap(), None);
+    assert!(materials.find_all().unwrap()[0].available);
+}
+
+#[derive(Default)]
+struct MockBambuAccountRepo {
+    saved: Mutex<Option<(BambuCredentials, Vec<PrinterDevice>)>>,
+}
+
+impl BambuAccountRepository for MockBambuAccountRepo {
+    fn load(&self) -> Result<Option<BambuAccount>, DomainError> {
+        Ok(self
+            .saved
+            .lock()
+            .unwrap()
+            .clone()
+            .map(|(credentials, devices)| BambuAccount {
+                credentials,
+                devices,
+                updated_at: "2026-10-25 20:00:00".to_owned(),
+            }))
+    }
+
+    fn save(
+        &self,
+        credentials: &BambuCredentials,
+        devices: &[PrinterDevice],
+    ) -> Result<(), DomainError> {
+        *self.saved.lock().unwrap() = Some((credentials.clone(), devices.to_vec()));
+        Ok(())
+    }
+}
+
+/// Accepts only "good-token", bound to the given printers.
+struct FakeBambuApi {
+    devices: Vec<PrinterDevice>,
+}
+
+#[async_trait::async_trait]
+impl BambuCloudApi for FakeBambuApi {
+    async fn fetch_user_id(&self, access_token: &str) -> Result<String, DomainError> {
+        if access_token == "good-token" {
+            Ok("1234567890".to_owned())
+        } else {
+            Err(DomainError::BambuTokenRejected)
+        }
+    }
+
+    async fn fetch_devices(&self, _access_token: &str) -> Result<Vec<PrinterDevice>, DomainError> {
+        Ok(self.devices.clone())
+    }
+}
+
+fn build_configure_uc(
+    devices: Vec<PrinterDevice>,
+) -> (
+    Arc<MockBambuAccountRepo>,
+    Arc<FakeTelemetry>,
+    ConfigureBambuUseCase<MockBambuAccountRepo>,
+) {
+    let accounts = Arc::new(MockBambuAccountRepo::default());
+    let telemetry = FakeTelemetry::with_stock(&[]);
+    let uc = ConfigureBambuUseCase::new(
+        Arc::clone(&accounts),
+        Arc::new(FakeBambuApi { devices }),
+        telemetry.clone(),
+    );
+    (accounts, telemetry, uc)
+}
+
+fn p1s() -> PrinterDevice {
+    PrinterDevice {
+        serial: "01P00A000000000".to_owned(),
+        name: "P1S".to_owned(),
+        model: "P1S".to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn configure_bambu_saves_a_valid_token_and_connects() {
+    let (accounts, telemetry, uc) = build_configure_uc(vec![p1s()]);
+
+    let count = uc.execute("  good-token\n", &Caller::Admin).await.unwrap();
+
+    assert_eq!(count, 1);
+    let (credentials, devices) = accounts.saved.lock().unwrap().clone().unwrap();
+    assert_eq!(credentials.user_id, "1234567890");
+    assert_eq!(credentials.access_token, "good-token");
+    assert_eq!(devices, vec![p1s()]);
+    assert_eq!(telemetry.connected.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn configure_bambu_rejects_a_refused_token_without_saving() {
+    let (accounts, telemetry, uc) = build_configure_uc(vec![p1s()]);
+
+    let err = uc
+        .execute("expired-token", &Caller::Admin)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, AppError::InvalidInput(ref msg) if msg.contains("bambu token rejected")));
+    assert!(accounts.saved.lock().unwrap().is_none());
+    assert!(telemetry.connected.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn configure_bambu_requires_a_printer_on_the_account() {
+    let (accounts, _telemetry, uc) = build_configure_uc(Vec::new());
+
+    let err = uc.execute("good-token", &Caller::Admin).await.unwrap_err();
+
+    assert!(matches!(err, AppError::InvalidInput(ref msg) if msg.contains("no printer bound")));
+    assert!(accounts.saved.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn configure_bambu_is_admin_only() {
+    let (_accounts, _telemetry, uc) = build_configure_uc(vec![p1s()]);
+
+    let err = uc
+        .execute("good-token", &Caller::Student { user_id: 1 })
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, AppError::NotAuthorized));
+}
+
+#[test]
+fn configure_bambu_resumes_the_saved_token() {
+    let (accounts, telemetry, uc) = build_configure_uc(vec![p1s()]);
+    assert!(!uc.resume().unwrap());
+
+    accounts
+        .save(
+            &BambuCredentials {
+                user_id: "1".to_owned(),
+                access_token: "saved".to_owned(),
+            },
+            &[p1s()],
+        )
+        .unwrap();
+    assert!(uc.resume().unwrap());
+    assert_eq!(telemetry.connected.lock().unwrap()[0].1, vec![p1s()]);
 }
 
 // ============================================================================

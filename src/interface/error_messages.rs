@@ -12,7 +12,17 @@ pub fn user_message(err: &AppError) -> &'static str {
         AppError::NotFound(_) => "Element introuvable.",
 
         AppError::InvalidInput(s) if s.contains("stock insuffisant") => {
-            "Stock insuffisant : le nouveau poids depasse la quantite restante de la bobine."
+            "Stock insuffisant : le poids depasse le filament disponible (mesure par l'AMS, moins les commandes en attente)."
+        }
+        AppError::InvalidInput(s) if s.contains("stock inconnu") => {
+            "Niveau de filament inconnu (imprimante hors ligne ou token Bambu expire) : impossible de valider ce poids pour le moment."
+        }
+        AppError::InvalidInput(s) if s.contains("bambu token rejected") => {
+            "Token Bambu refuse : il est invalide ou a expire."
+        }
+        AppError::InvalidInput(s) if s.contains("bambu token") => "Token Bambu vide ou mal forme.",
+        AppError::InvalidInput(s) if s.contains("no printer bound") => {
+            "Aucune imprimante n'est associee a ce compte Bambu."
         }
         AppError::InvalidInput(s) if s.contains("un materiau doit etre defini") => {
             "Un materiau doit etre selectionne pour faire avancer la commande."
@@ -22,10 +32,6 @@ pub fn user_message(err: &AppError) -> &'static str {
         }
         AppError::InvalidInput(s) if s.contains("can no longer be cancelled") => {
             "Cette commande ne peut plus etre annulee."
-        }
-
-        AppError::InvalidInput(s) if s.contains("referenced by orders") => {
-            "Impossible de supprimer : ce materiau est utilise par des commandes."
         }
 
         AppError::InvalidInput(s) if s.contains("status transition") => {
@@ -66,5 +72,6 @@ pub fn user_message(err: &AppError) -> &'static str {
         AppError::InvalidInput(_) => "Donnees invalides. Verifiez votre saisie.",
 
         AppError::Database(_) => "Erreur interne. Veuillez reessayer.",
+        AppError::Unavailable(_) => "Service Bambu injoignable. Reessayez dans quelques instants.",
     }
 }

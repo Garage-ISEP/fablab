@@ -11,6 +11,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "002_material_spool_weight",
         include_str!("../../../migrations/002_material_spool_weight.sql"),
     ),
+    (
+        "003_bambu_inventory",
+        include_str!("../../../migrations/003_bambu_inventory.sql"),
+    ),
 ];
 
 pub fn run_migrations(pool: &DbPool) -> Result<(), DomainError> {

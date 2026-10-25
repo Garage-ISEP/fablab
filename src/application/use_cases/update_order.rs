@@ -6,10 +6,10 @@ use crate::application::dtos::order_input::UpdateOrderInput;
 use crate::application::dtos::order_output::OrderView;
 use crate::application::errors::AppError;
 use crate::application::use_cases::order_files::PurgeOrderFilesUseCase;
-use crate::domain::material::Material;
+use crate::domain::errors::DomainError;
 use crate::domain::order::{Order, OrderStatus};
 use crate::domain::repositories::{
-    MaterialRepository, OrderFileRepository, OrderRepository, UserRepository,
+    MaterialRepository, OrderFileRepository, OrderRepository, PrinterTelemetry, UserRepository,
 };
 
 pub struct UpdateOrderUseCase<O, U, M, F>
@@ -23,6 +23,7 @@ where
     users: Arc<U>,
     materials: Arc<M>,
     purge: Arc<PurgeOrderFilesUseCase<F>>,
+    telemetry: Arc<dyn PrinterTelemetry>,
 }
 
 impl<O, U, M, F> UpdateOrderUseCase<O, U, M, F>
@@ -37,12 +38,14 @@ where
         users: Arc<U>,
         materials: Arc<M>,
         purge: Arc<PurgeOrderFilesUseCase<F>>,
+        telemetry: Arc<dyn PrinterTelemetry>,
     ) -> Self {
         Self {
             orders,
             users,
             materials,
             purge,
+            telemetry,
         }
     }
 
@@ -62,8 +65,16 @@ where
             .ok_or_else(|| AppError::NotFound(format!("order {}", input.order_id)))?;
 
         let previous_status = order.status;
+        let material_changed = input
+            .material_id
+            .is_some_and(|mid| Some(mid) != order.material_id);
+        let weight_changed = input
+            .sliced_weight_grams
+            .is_some_and(|w| Some(w) != order.sliced_weight_grams);
 
-        if let Some(new_mid) = input.material_id {
+        // Re-saving the current material is fine even once its spool is
+        // gone from the AMS; only switching to an unloaded one is refused.
+        if let Some(new_mid) = input.material_id.filter(|_| material_changed) {
             let material = self
                 .materials
                 .find_by_id(new_mid)?
@@ -91,11 +102,15 @@ where
             order.print_time_minutes = Some(t);
         }
 
+        // Only a new reservation (weight or material set or changed on an
+        // order not printed yet) needs a fresh AMS measure: other edits
+        // must keep working while the printers are offline.
         match (order.material_id, order.sliced_weight_grams) {
-            (Some(mid), Some(_)) => {
-                let material = self.load_material(mid)?;
-                self.orders
-                    .update_if_stock_sufficient(&order, material.spool_weight_grams)?;
+            (Some(mid), Some(_))
+                if order.status.reserves_filament() && (material_changed || weight_changed) =>
+            {
+                let measured = self.measured_remaining_grams(mid)?;
+                self.orders.update_if_stock_sufficient(&order, measured)?;
             }
             _ => {
                 self.orders.update(&order)?;
@@ -111,10 +126,17 @@ where
         self.build_view(order)
     }
 
-    fn load_material(&self, material_id: i64) -> Result<Material, AppError> {
-        self.materials
+    fn measured_remaining_grams(&self, material_id: i64) -> Result<f64, AppError> {
+        let material = self
+            .materials
             .find_by_id(material_id)?
-            .ok_or_else(|| AppError::NotFound(format!("material {material_id}")))
+            .ok_or_else(|| AppError::NotFound(format!("material {material_id}")))?;
+        let inventory = self.telemetry.snapshot();
+        material
+            .bambu_key
+            .as_deref()
+            .and_then(|key| inventory.measured_remaining_grams(key))
+            .ok_or_else(|| DomainError::StockUnknown { material_id }.into())
     }
 
     fn build_view(&self, order: Order) -> Result<OrderView, AppError> {

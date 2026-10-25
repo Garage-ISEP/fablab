@@ -446,35 +446,6 @@ pub async fn admin_delete_order_handler(
     Redirect::to("/admin").into_response()
 }
 
-/// POST /admin/materials/:id/delete -- admin removes a material.
-/// Refuses deletion if the material is referenced by any order.
-pub async fn admin_delete_material_handler(
-    State(state): State<AppState>,
-    session: Session,
-    Path(material_id): Path<i64>,
-) -> Response {
-    let role: Option<String> = session.get("role").await.ok().flatten();
-    if role.as_deref() != Some("admin") {
-        return (StatusCode::FORBIDDEN, "non autorise").into_response();
-    }
-
-    let manage_material = state.manage_material.clone();
-    let result = tokio::task::spawn_blocking(move || manage_material.delete(material_id)).await;
-
-    match result {
-        Ok(Ok(())) => {
-            let _ = set_flash(&session, FlashLevel::Success, "Materiau supprime.").await;
-        }
-        Ok(Err(e)) => {
-            let _ = set_flash(&session, FlashLevel::Error, user_message(&e)).await;
-        }
-        Err(_) => {
-            let _ = set_flash(&session, FlashLevel::Error, "Erreur interne.").await;
-        }
-    }
-    Redirect::to("/admin/materials").into_response()
-}
-
 async fn resolve_student_caller(session: &Session) -> Result<Caller, Response> {
     let role: Option<String> = session
         .get("role")

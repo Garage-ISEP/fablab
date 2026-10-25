@@ -14,12 +14,12 @@ use crate::application::use_cases::get_order::GetOrderUseCase;
 use crate::application::use_cases::get_user_phone::GetUserPhoneUseCase;
 use crate::application::use_cases::list_materials::ListMaterialsUseCase;
 use crate::application::use_cases::list_orders::ListOrdersUseCase;
-use crate::application::use_cases::manage_material::ManageMaterialUseCase;
 use crate::application::use_cases::notify_order::NotifyNewOrderUseCase;
 use crate::application::use_cases::order_files::{
     AdminDeleteOrderUseCase, CancelOrderUseCase, DeleteOrderFileUseCase, DownloadOrderFileUseCase,
     StudentCancelOrderUseCase, UploadOrderFileUseCase,
 };
+use crate::application::use_cases::printers::{ConfigureBambuUseCase, GetPrinterOverviewUseCase};
 use crate::application::use_cases::submit_order::SubmitOrderUseCase;
 use crate::application::use_cases::update_order::UpdateOrderUseCase;
 use crate::application::use_cases::update_phone::UpdatePhoneUseCase;
@@ -27,16 +27,16 @@ use crate::domain::repositories::UserRepository;
 use crate::infrastructure::auth::argon2::Argon2PasswordVerifier;
 use crate::infrastructure::cas::client::CasClient;
 use crate::infrastructure::db::admin_repo::SqliteAdminRepository;
+use crate::infrastructure::db::bambu_account_repo::SqliteBambuAccountRepository;
 use crate::infrastructure::db::material_repo::SqliteMaterialRepository;
 use crate::infrastructure::db::order_file_repo::SqliteOrderFileRepository;
 use crate::infrastructure::db::order_repo::SqliteOrderRepository;
 use crate::infrastructure::db::user_repo::SqliteUserRepository;
 use crate::infrastructure::email::smtp_sender::SmtpNotificationSender;
-use crate::infrastructure::mqtt::SharedPrinterStatuses;
 use crate::infrastructure::storage::local_fs::LocalFileStorage;
 use crate::interface::file_handlers::{
-    admin_delete_material_handler, admin_delete_order_handler, delete_file_handler,
-    download_file_handler, student_cancel_order_handler, upload_order_handler,
+    admin_delete_order_handler, delete_file_handler, download_file_handler,
+    student_cancel_order_handler, upload_order_handler,
 };
 use crate::interface::flash::{FlashLevel, set_flash};
 
@@ -57,7 +57,8 @@ type ConcreteGetOrder = GetOrderUseCase<
     SqliteOrderFileRepository,
 >;
 type ConcreteListMaterials = ListMaterialsUseCase<SqliteMaterialRepository, SqliteOrderRepository>;
-type ConcreteManageMaterial = ManageMaterialUseCase<SqliteMaterialRepository>;
+type ConcretePrinterOverview = GetPrinterOverviewUseCase<SqliteBambuAccountRepository>;
+type ConcreteConfigureBambu = ConfigureBambuUseCase<SqliteBambuAccountRepository>;
 type ConcreteUpdatePhone = UpdatePhoneUseCase<SqliteUserRepository>;
 type ConcreteGetUserPhone = GetUserPhoneUseCase<SqliteUserRepository>;
 type ConcreteAdminLogin = AdminLoginUseCase<SqliteAdminRepository, Argon2PasswordVerifier>;
@@ -90,7 +91,6 @@ pub struct AppState {
     pub list_orders: Arc<ConcreteListOrders>,
     pub get_order: Arc<ConcreteGetOrder>,
     pub list_materials: Arc<ConcreteListMaterials>,
-    pub manage_material: Arc<ConcreteManageMaterial>,
     pub update_phone: Arc<ConcreteUpdatePhone>,
     pub get_user_phone: Arc<ConcreteGetUserPhone>,
     pub admin_login: Arc<ConcreteAdminLogin>,
@@ -104,7 +104,8 @@ pub struct AppState {
     pub storage: Arc<LocalFileStorage>,
     pub cas_client: Arc<CasClient>,
     pub cas_service_url: Arc<str>,
-    pub printer_statuses: SharedPrinterStatuses,
+    pub printer_overview: Arc<ConcretePrinterOverview>,
+    pub configure_bambu: Arc<ConcreteConfigureBambu>,
     user_repo: Arc<SqliteUserRepository>,
 }
 
@@ -115,7 +116,6 @@ pub struct AppStateParams {
     pub list_orders: Arc<ConcreteListOrders>,
     pub get_order: Arc<ConcreteGetOrder>,
     pub list_materials: Arc<ConcreteListMaterials>,
-    pub manage_material: Arc<ConcreteManageMaterial>,
     pub update_phone: Arc<ConcreteUpdatePhone>,
     pub get_user_phone: Arc<ConcreteGetUserPhone>,
     pub admin_login: Arc<ConcreteAdminLogin>,
@@ -129,7 +129,8 @@ pub struct AppStateParams {
     pub storage: Arc<LocalFileStorage>,
     pub cas_client: Arc<CasClient>,
     pub cas_service_url: Arc<str>,
-    pub printer_statuses: SharedPrinterStatuses,
+    pub printer_overview: Arc<ConcretePrinterOverview>,
+    pub configure_bambu: Arc<ConcreteConfigureBambu>,
     pub user_repo: Arc<SqliteUserRepository>,
 }
 
@@ -142,7 +143,6 @@ impl AppState {
             list_orders: p.list_orders,
             get_order: p.get_order,
             list_materials: p.list_materials,
-            manage_material: p.manage_material,
             update_phone: p.update_phone,
             get_user_phone: p.get_user_phone,
             admin_login: p.admin_login,
@@ -156,7 +156,8 @@ impl AppState {
             storage: p.storage,
             cas_client: p.cas_client,
             cas_service_url: p.cas_service_url,
-            printer_statuses: p.printer_statuses,
+            printer_overview: p.printer_overview,
+            configure_bambu: p.configure_bambu,
             user_repo: p.user_repo,
         }
     }
@@ -210,10 +211,6 @@ where
         .route("/admin/files/{id}/delete", post(delete_file_handler))
         .route("/my-orders/{id}/cancel", post(student_cancel_order_handler))
         .route("/admin/order/{id}/delete", post(admin_delete_order_handler))
-        .route(
-            "/admin/materials/{id}/delete",
-            post(admin_delete_material_handler),
-        )
         .nest_service("/style", ServeDir::new("style"))
         .nest_service("/public", ServeDir::new("public"))
         .route_service("/favicon.ico", ServeFile::new("public/favicon.ico"))

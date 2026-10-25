@@ -24,6 +24,12 @@ impl OrderStatus {
         }
     }
 
+    /// Orders accepted but not printed yet hold their sliced weight on the
+    /// spool. Once printed, the filament is gone from the AMS measure.
+    pub fn reserves_filament(&self) -> bool {
+        matches!(self, OrderStatus::ATraiter | OrderStatus::EnTraitement)
+    }
+
     pub fn can_transition_to(&self, target: OrderStatus) -> bool {
         matches!(
             (self, target),

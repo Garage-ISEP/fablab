@@ -24,6 +24,15 @@ pub enum DomainError {
         available_grams: f64,
     },
 
+    #[error("stock unknown for material {material_id}: no fresh AMS measure")]
+    StockUnknown { material_id: i64 },
+
+    #[error("bambu token rejected")]
+    BambuTokenRejected,
+
+    #[error("bambu cloud error: {0}")]
+    BambuUnavailable(String),
+
     #[error("a material must be defined before moving the order to status '{target}'")]
     MaterialRequiredForStatus { target: String },
 
